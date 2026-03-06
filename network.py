@@ -13,7 +13,7 @@ def get_host():
 
 # make general network on port 3xxx
 
-async def create(node,node_port):
+async def create(node:Server,node_port):
 
     await node.listen(node_port,interface="0.0.0.0")
     print(f"listening on port {node_port}")
@@ -21,7 +21,7 @@ async def create(node,node_port):
 
 # connect to network
 
-async def connect(node,node_port,peer_ip,peer_port):
+async def connect(node:Server,node_port,peer_ip,peer_port):
     # wait some time for host to start up
     await asyncio.sleep(5)
     await node.listen(node_port,interface="0.0.0.0")
@@ -30,23 +30,6 @@ async def connect(node,node_port,peer_ip,peer_port):
     print(f"trying to connect to {peer_ip}:{peer_port}")
     await node.bootstrap([bootstrap_node])
     await asyncio.sleep(1)
-
-async def broadcast(node:Server):
-    peers = node.protocol.router.find_neighbors(node.node)
-    for peer in peers:
-        reader, writer = await asyncio.open_connection(host=peer[1],port=peer[2])
-
-        print(f'Send: {message!r}')
-        writer.write(message.encode())
-        await writer.drain()
-
-        data = await reader.read(100)
-        print(f'Received: {data.decode()!r}')
-
-        print('Close the connection')
-        writer.close()
-        await writer.wait_closed()
-    pass
 
 # make general merger network
 

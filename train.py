@@ -6,9 +6,7 @@ from train_settings import Train_Settings
 from torch.utils.data import DataLoader
 import torch
 import asyncio
-import threading
 from kademlia.network import Server
-from kademlia.routing import RoutingTable
 from broadcast import *
 from network import get_host
 import json
@@ -53,56 +51,27 @@ class Training_Stage():
         async with self.trained_lock:
             self.trained = value
 
-    async def deny_share_request(self,broadcast:Broadcast):
+    async def deny_aggregate_request(self,broadcast:Broadcast):
         try:
             while True:
-                print("[deny_share_request] checking for share requests")
+                print("[deny_aggregaterequest] checking for aggregate requests")
                 messages = await broadcast.get_messages()
                 # handle all share requests
                 for message in messages:
                     msg = json.loads(message)
-                    if 'request' in msg.keys() and msg['request'] == 'share':
-                        print("[deny_share_request] found share request")
+                    if 'request' in msg.keys() and msg['request'] == 'aggregate':
+                        print("[deny_aggregate_request] found aggregate request")
                         ip = msg["source_ip"]
                         data = {
                             'source_ip':f'{get_host()}',
                             'destination_ip':f"{ip}",
-                            'response':'deny',
+                            'response':'deny_aggregate',
                             'relay':False
                         }
                         await broadcast.send(ip,json.dumps(data))
                         await broadcast.ignore_message(message)
                         await broadcast.delete_message(message)
-                        print(f"[deny_share_request] denied share request : {ip}")
+                        print(f"[deny_aggregate_request] denied aggregate request : {ip}")
                 await asyncio.sleep(2)
         except:
-            print("[deny_share_request] stopped")
-
-    async def share_request(self,node:Server,broadcast:Broadcast):
-        nodes = node.protocol.router.find_neighbors(node.node)
-        for n in nodes:
-            data = {
-                'source_ip':f'{get_host()}',
-                'request':'share',
-                'relay':True
-            }
-            try:
-                await broadcast.send(n.ip,json.dumps(data))
-            except:
-                print(f"[share_request] share requests failed to send to {n.ip}")
-        print("[share_request] share requests sent")
-
-    async def await_share_response(self,broadcast:Broadcast):
-        ticker = 30
-        while ticker > 0:
-            print("[await_share_response] waiting for share response")
-            messages = await broadcast.get_messages()
-            for message in messages:
-                msg = json.loads(message)
-                if 'response' in msg.keys() and msg["response"] == "deny":
-                    print("[await_share_response] deny was sent")
-                    return True
-            await asyncio.sleep(5)
-            ticker = ticker - 5
-            print(f"[await_share_response] time left {ticker} seconds")
-        return False
+            print("[deny_aggregate_request] stopped")

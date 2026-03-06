@@ -56,10 +56,11 @@ class Broadcast():
             self.messages = []
 
     async def single_relay(self,node,message):
+        # intial + 3 retries
         for tries in range(4):
                 try:
                     print(f"[broadcast.relay] relaying {message} to {node.ip}")
-                    reader,writer = await asyncio.wait_for(asyncio.open_connection(node.ip,port=8888),timeout=5)
+                    _,writer = await asyncio.wait_for(asyncio.open_connection(node.ip,port=8888),timeout=5)
                     writer.write(message.encode())
                     await writer.drain()
                     writer.close()
@@ -74,7 +75,6 @@ class Broadcast():
         nodes = self.node.protocol.router.find_neighbors(self.node.node)
         relay_tasks = []
         for node in nodes:
-        # intial + 3 retries
             relay_tasks.append(self.single_relay(node,message))
         await asyncio.gather(*relay_tasks,return_exceptions=True)
 
