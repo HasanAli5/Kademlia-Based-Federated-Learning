@@ -1,0 +1,31 @@
+
+services:
+  seed:
+    build: 
+      context: .
+      dockerfile: .dockerfile
+    command: python main.py -np 8650
+    devices:
+      - nvidia.com/gpu=all 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+  client:
+    build: 
+      context: .
+      dockerfile: .dockerfile
+    command: python main.py -np 8650 -i seed -p 8650
+    devices:
+      - nvidia.com/gpu=all 
+    deploy:
+      replicas: 4
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

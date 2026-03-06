@@ -1,0 +1,8 @@
+__pycache__
+.venv
+data
+.dockerfile
+.yml
+.ipynb
+.pth
+.json

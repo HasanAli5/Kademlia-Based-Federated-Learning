@@ -1,0 +1,9 @@
+matplotlib
+medmnist
+kademlia
+grpcio
+grpcio-tools
+
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch
+torchvision
