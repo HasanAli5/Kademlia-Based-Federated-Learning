@@ -1,8 +1,11 @@
+
 __pycache__
 .venv
+.git
 data
-.dockerfile
-.yml
-.ipynb
-.pth
-.json
+
+*.dockerfile
+*.yml
+*.ipynb
+*.pth
+*.json

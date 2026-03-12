@@ -26,6 +26,7 @@ async def cycle(model,dataloaders,node:Server,broadcast:Broadcast,ns_number):
     # import model from file?
 
     # [TRAINING STAGE]
+    print("[TRAINING STAGE]")
 
     train = Training_Stage()
 
@@ -41,16 +42,19 @@ async def cycle(model,dataloaders,node:Server,broadcast:Broadcast,ns_number):
     except asyncio.CancelledError: print("Stopped waiting for deny_task to cancel")
 
     # [AGGREGATION STAGE]
+    print("[AGGREGATION STAGE]")
+
     aggregate = Aggregate_Stage()
 
     # send aggregation request if possible to start network
-    await aggregate.aggregate_request(node,broadcast)
+    await aggregate.aggregate_request(broadcast)
     # get all denied request with a certain timeframe
     denied = await aggregate.await_aggregate_response(broadcast)
 
     # solve potential tied last using ns_number
+    leading = False
     if not denied:
-        leading = await aggregate.is_leader(ns_number)
+        leading = await aggregate.is_leader(node,broadcast,ns_number)
 
     print(f"Denied : {denied}\n"+
           f"Leading : {leading}")
@@ -59,16 +63,20 @@ async def cycle(model,dataloaders,node:Server,broadcast:Broadcast,ns_number):
     sharing_node = Server()
 
     # if denied then wait for the signal to connect instead
-    if denied:
-        leader_ip,leader_port = await aggregate.wait_for_leader()
+    if denied or not leading:
+        leader_ip,leader_port = await aggregate.wait_for_leader(broadcast)
         await connect(sharing_node,8561,leader_ip,leader_port)
-        pass
     # else create network
     elif not denied and leading:
         await create(sharing_node,8561)
-        pass
+        #send the join advert
+        await aggregate.send_join_request(broadcast,8561)
+
+    print(f"Cycle Ended")
 
     # pair up the nodes and start sharing process
+    while aggregate.dropped == False:
+        
     # one node drops out of network while other stays to aggregate further
 
     # [SHARING STAGE]
@@ -158,6 +166,8 @@ if __name__ == "__main__":
         pass
     finally:
         relay_task.cancel()
+        try:relay_task
+        except asyncio.CancelledError: print("Stopped Relay")
         relay.end()
         node.stop()
         loop.close()

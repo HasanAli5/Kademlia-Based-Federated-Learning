@@ -54,7 +54,7 @@ class Training_Stage():
     async def deny_aggregate_request(self,broadcast:Broadcast):
         try:
             while True:
-                print("[deny_aggregaterequest] checking for aggregate requests")
+                print("[deny_aggregate_request] checking for aggregate requests")
                 messages = await broadcast.get_messages()
                 # handle all share requests
                 for message in messages:
