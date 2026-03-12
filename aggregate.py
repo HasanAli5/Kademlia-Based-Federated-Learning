@@ -16,6 +16,7 @@ class Aggregate_Stage():
     async def aggregate_request(self,broadcast:Broadcast):
         data = {
             'source_ip':f'{get_host()}',
+            'source_port':f'{broadcast.port}',
             'request':'aggregate',
             'relay':True
         }
@@ -43,6 +44,7 @@ class Aggregate_Stage():
     async def send_leader_request(self,node:Server,broadcast:Broadcast):
         data = {
             'source_ip':f'{get_host()}',
+            'source_port':f'{broadcast.port}',
             'request':'leader_request',
             'node_id':f"{node.node.long_id}",
             'relay':True
@@ -61,31 +63,36 @@ class Aggregate_Stage():
                     if 'request' in msg.keys() and msg["request"] == "leader_request":
                         print("[is_leader] found leader request")
                         ip = msg["source_ip"]
+                        port = msg["source_port"]
                         # if this node has better node id (closer to ns_number)
                         print(f"{node.node.long_id} vs {msg["node_id"]}")
                         if abs(ns_number-node.node.long_id)<abs(ns_number-int(msg["node_id"])):
                             data = {
                                 'source_ip':f'{get_host()}',
+                                'source_port':f'{broadcast.port}',
                                 'destination_ip':f"{ip}",
+                                'destination_port':f"{port}",
                                 'response':'deny_leader',
                                 'relay':False
                             }
-                            await broadcast.send(ip,json.dumps(data))
+                            await broadcast.send(ip,port,json.dumps(data))
                             await broadcast.ignore_message(message)
                             await broadcast.delete_message(message)
-                            print(f"[deny_leader_request] leader request from {ip} is denied")
+                            print(f"[deny_leader_request] leader request from {ip}:{port} is denied")
                         else:
                             print("[is_leader] other node id is closer to ns_number")
                             data = {
                                 'source_ip':f'{get_host()}',
+                                'source_port':f'{broadcast.port}',
                                 'destination_ip':f"{ip}",
+                                'destination_port':f"{port}",
                                 'response':'accept_leader',
                                 'relay':False
                             }
-                            await broadcast.send(ip,json.dumps(data))
+                            await broadcast.send(ip,port,json.dumps(data))
                             await broadcast.ignore_message(message)
                             await broadcast.delete_message(message)
-                            print(f"[deny_leader_request] leader request from {ip} is accepted")
+                            print(f"[deny_leader_request] leader request from {ip}:{port} is accepted")
                 await asyncio.sleep(2)
         except:
             print("[is_leader] deny request failed")
@@ -135,6 +142,7 @@ class Aggregate_Stage():
     async def send_join_request(self,broadcast:Broadcast,port):
         data = {
             'source_ip':f'{get_host()}',
+            'source_port':f"{broadcast.port}",
             'request':'join_request',
             'leader_ip':f"{get_host()}",
             'leader_port':f"{port}",
@@ -157,6 +165,21 @@ class Aggregate_Stage():
                     leader_port = msg["leader_port"]
                     return leader_ip,leader_port
             await asyncio.sleep(3)
+
+
+    async def aggregation(self,aggregation_node):
+        while not self.dropped:
+            #pairing procedure
+
+            #then send/recieve model.
+
+            #if recieved model then aggregate
+
+            #if sent then get ready to recieve
+
+            #drop or continue to next step.
+            pass
+        pass
 
     async def pairing(self):
         # send request to all nodes (advertise)

@@ -60,29 +60,35 @@ async def cycle(model,dataloaders,node:Server,broadcast:Broadcast,ns_number):
           f"Leading : {leading}")
     
     # initialise sharing node
-    sharing_node = Server()
+    aggregation_node = Server()
+    aggregation_broadcast = Broadcast(aggregation_node,8889,20)
+
+    aggregation_relay_task = loop.create_task(aggregation_broadcast.start())
 
     # if denied then wait for the signal to connect instead
     if denied or not leading:
         leader_ip,leader_port = await aggregate.wait_for_leader(broadcast)
-        await connect(sharing_node,8561,leader_ip,leader_port)
+        await connect(aggregation_node,8561,leader_ip,leader_port)
     # else create network
     elif not denied and leading:
-        await create(sharing_node,8561)
+        await create(aggregation_node,8561)
         #send the join advert
         await aggregate.send_join_request(broadcast,8561)
 
-    print(f"Cycle Ended")
-
-    # pair up the nodes and start sharing process
-    while aggregate.dropped == False:
+    # do whole aggregation process.
+    await aggregate.aggregation()
         
     # one node drops out of network while other stays to aggregate further
+
+    aggregation_relay_task.cancel()
+    try: await aggregation_relay_task
+    except asyncio.CancelledError: print("Stopped Aggregation Relay")
 
     # [SHARING STAGE]
     
     # leaves one that will start to distibute the agregated result
-    pass
+
+    print(f"Cycle Ended")
 
 if __name__ == "__main__":
 
@@ -156,7 +162,7 @@ if __name__ == "__main__":
         print(f"ns_number found : {ns_number}")
     
     # start relay system coroutine
-    relay = Broadcast(node,20)
+    relay = Broadcast(node,8888,20)
     relay_task = loop.create_task(relay.start())
 
     # Run Cycles
@@ -166,7 +172,7 @@ if __name__ == "__main__":
         pass
     finally:
         relay_task.cancel()
-        try:relay_task
+        try: loop.run_until_complete(relay_task)
         except asyncio.CancelledError: print("Stopped Relay")
         relay.end()
         node.stop()

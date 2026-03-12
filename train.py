@@ -40,7 +40,7 @@ class Training_Stage():
         training_task = loop.run_in_executor(None,train_val_loop,model,config,(train_dl,val_dl),epoch,logs)
 
         await training_task
-        
+
         await self.set_trained(True)
 
     async def get_trained(self):
@@ -62,13 +62,16 @@ class Training_Stage():
                     if 'request' in msg.keys() and msg['request'] == 'aggregate':
                         print("[deny_aggregate_request] found aggregate request")
                         ip = msg["source_ip"]
+                        port = msg["source_port"]
                         data = {
                             'source_ip':f'{get_host()}',
+                            'source_port':f"{broadcast.port}",
                             'destination_ip':f"{ip}",
+                            'destination_port':f"{port}",
                             'response':'deny_aggregate',
                             'relay':False
                         }
-                        await broadcast.send(ip,json.dumps(data))
+                        await broadcast.send(ip,port,json.dumps(data))
                         await broadcast.ignore_message(message)
                         await broadcast.delete_message(message)
                         print(f"[deny_aggregate_request] denied aggregate request : {ip}")

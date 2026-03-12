@@ -1,13 +1,13 @@
 
 from kademlia.network import Server
+from kademlia.node import Node
 import asyncio
-import threading
 import json
 import network
 
 class Broadcast():
 
-    def __init__(self,node:Server,max_length:int):
+    def __init__(self,node:Server,port:int,max_length:int):
 
         self.max_length = max_length
         self.ignorelist = []
@@ -16,6 +16,7 @@ class Broadcast():
         self.loop = None
         self.server = None
         self.node = node
+        self.port = port
 
     async def store(self,message:str):
         async with self.messages_lock:
@@ -55,19 +56,19 @@ class Broadcast():
                 self.ignorelist.append(hash(msg))
             self.messages = []
 
-    async def single_relay(self,node,message):
+    async def single_relay(self,node:Node,message:str):
         # intial + 3 retries
         for tries in range(4):
                 try:
-                    print(f"[broadcast.relay] relaying {message} to {node.ip}")
-                    _,writer = await asyncio.wait_for(asyncio.open_connection(node.ip,port=8888),timeout=5)
+                    print(f"[broadcast.relay] relaying {message} to {node.ip}:{self.port}")
+                    _,writer = await asyncio.wait_for(asyncio.open_connection(node.ip,self.port),timeout=5)
                     writer.write(message.encode())
                     await writer.drain()
                     writer.close()
                     await writer.wait_closed()
                     break
                 except:
-                    print(f"[broadcast.relay] retrying ({tries+1}) {message} to {node.ip}")
+                    print(f"[broadcast.relay] retrying ({tries+1}) {message} to {node.ip}:{self.port}")
                     await asyncio.sleep(1)
 
 
@@ -106,23 +107,23 @@ class Broadcast():
         writer.close()
         await writer.wait_closed()
 
-    async def send(self,peer_ip,message:str):
-        print(f"[broadcast.send] sending {peer_ip} : {message}")
+    async def send(self,peer_ip,peer_port,message:str):
+        print(f"[broadcast.send] sending {peer_ip}:{peer_port} : {message}")
         # intial + 3 retries
         for tries in range(4):
             try:
-                _,writer = await asyncio.wait_for(asyncio.open_connection(peer_ip,port=8888),timeout=5)
+                _,writer = await asyncio.wait_for(asyncio.open_connection(peer_ip,peer_port),timeout=5)
                 writer.write(message.encode())
                 await writer.drain()
                 writer.close()
                 await writer.wait_closed()
                 return
             except:
-                print(f"[broadcast.send] retrying ({tries+1}) {peer_ip} : {message}")
+                print(f"[broadcast.send] retrying ({tries+1}) {peer_ip}:{peer_port} : {message}")
                 await asyncio.sleep(1)
     
     async def start(self):
-        self.server = await asyncio.start_server(self.receive,"0.0.0.0",8888)
+        self.server = await asyncio.start_server(self.receive,"0.0.0.0",self.port)
         await self.server.serve_forever()
 
     def end(self):
