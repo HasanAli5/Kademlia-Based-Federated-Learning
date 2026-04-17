@@ -1,6 +1,6 @@
 # we will split the client data up by 10 segments and let the individual train on selected amount of data.
 
-from functions import train_val_loop
+from model_functions import train_val_loop
 from model import ResNet18
 from train_settings import Train_Settings
 from torch.utils.data import DataLoader
@@ -58,22 +58,17 @@ class Training_Stage():
                 messages = await broadcast.get_messages()
                 # handle all share requests
                 for message in messages:
-                    msg = json.loads(message)
-                    if 'request' in msg.keys() and msg['request'] == 'aggregate':
+                    msg:dict = await broadcast.convert_message(message)
+                    if msg.get('request') == 'aggregate':
                         print("[deny_aggregate_request] found aggregate request")
                         ip = msg["source_ip"]
                         port = msg["source_port"]
                         data = {
-                            'source_ip':f'{get_host()}',
-                            'source_port':f"{broadcast.port}",
-                            'destination_ip':f"{ip}",
-                            'destination_port':f"{port}",
                             'response':'deny_aggregate',
-                            'relay':False
                         }
+                        data = broadcast.make_message(broadcast,relay=False,extra_data=data)
                         await broadcast.send(ip,port,json.dumps(data))
-                        await broadcast.ignore_message(message)
-                        await broadcast.delete_message(message)
+                        await broadcast.delete_and_ignore_message(message)
                         print(f"[deny_aggregate_request] denied aggregate request : {ip}")
                 await asyncio.sleep(2)
         except:

@@ -1,9 +1,6 @@
-import kademlia
-import asyncio
-import logging
-import grpc
-import socket
 from kademlia.network import Server
+import asyncio
+import socket
 
 def get_host():
     s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
@@ -42,11 +39,3 @@ async def connect(node:Server,node_port,peer_ip,peer_port):
             attempts=attempts+1
     await asyncio.sleep(1)
     return connected
-
-# make general merger network
-
-# send file to other pc using grcp
-
-# recieve file
-
-# fedavg

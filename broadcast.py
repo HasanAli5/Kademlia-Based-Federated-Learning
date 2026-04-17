@@ -4,6 +4,7 @@ from kademlia.node import Node
 import asyncio
 import json
 import network
+import time
 
 class Broadcast():
 
@@ -42,19 +43,45 @@ class Broadcast():
             self.ignorelist.append(hash(message))
     
     async def filter_messages(self,key,value):
-        try:
-            async with self.messages_lock:
-                for msg in self.messages:
-                    if msg[key] == value:
-                        self.messages.remove(msg)
-        except:
-            pass
+        async with self.messages_lock:
+            for msg in self.messages:
+                if msg.get(key) == value:
+                    self.messages.remove(msg)
 
     async def ignore_all_messages(self):
         async with self.messages_lock:
             for msg in self.messages:
                 self.ignorelist.append(hash(msg))
             self.messages = []
+
+    # extra message methods
+
+    def make_message(self,relay:bool,extra_data:dict):
+    # the message always has this data.
+        data = {
+            'source_ip':f'{network.get_host()}',
+            'source_port':f'{self.port}',
+            'source_node_id':f'{self.node.node.long_id}',
+            'relay':f'{relay}',
+            'timestamp':f'{time.time()}'
+        }
+        data.update(extra_data)
+        return data
+
+    async def convert_message(self,message):
+        msg = None
+        try:
+            msg:dict = json.loads(message)
+        except:
+            # if malformed message then delete
+            await self.delete_and_ignore_message(message)
+        return msg
+
+    async def delete_and_ignore_message(self,message):
+        await self.ignore_message(message)
+        await self.delete_message(message)
+
+    # relay funtions
 
     async def single_relay(self,node:Node,message:str):
         # intial + 3 retries
@@ -79,7 +106,8 @@ class Broadcast():
             relay_tasks.append(self.single_relay(node,message))
         await asyncio.gather(*relay_tasks,return_exceptions=True)
 
-
+    # recieve
+    
     async def receive(self,reader:asyncio.StreamReader,writer:asyncio.StreamWriter):
         # recieve code
         data = await reader.read()
@@ -107,7 +135,9 @@ class Broadcast():
         writer.close()
         await writer.wait_closed()
 
-    async def send(self,peer_ip,peer_port,message:str):
+    # send
+
+    async def send(self,peer_ip:str,peer_port:int,message:str):
         print(f"[broadcast.send] sending {peer_ip}:{peer_port} : {message}")
         # intial + 3 retries
         for tries in range(4):
@@ -121,7 +151,9 @@ class Broadcast():
             except:
                 print(f"[broadcast.send] retrying ({tries+1}) {peer_ip}:{peer_port} : {message}")
                 await asyncio.sleep(1)
-    
+
+    # server functionality
+
     async def start(self):
         self.server = await asyncio.start_server(self.receive,"0.0.0.0",self.port)
         await self.server.serve_forever()

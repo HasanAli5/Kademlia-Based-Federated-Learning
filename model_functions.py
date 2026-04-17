@@ -41,10 +41,10 @@ def train(dataloader, model, loss_fn, device, optimiser):
         correct += correct_batch(pred,labels.float())
         if batch % 25 == 0:
             loss, current = loss.item(), (batch + 1) * len(inputs)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+            print(f"Loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
     train_loss /= num_batches
     correct /= size
-    print(f"Train Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {train_loss:>8f} \n")
+    print(f"Train Error: Accuracy: {(100*correct):>0.1f}%, Average Loss: {train_loss:>8f}")
     return train_loss,correct
 
 def test(dataloader, model, loss_fn, device):
@@ -60,7 +60,7 @@ def test(dataloader, model, loss_fn, device):
             correct += correct_batch(pred,labels.float())
     test_loss /= num_batches
     correct /= size
-    print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    print(f"Test Error: Accuracy: {(100*correct):>0.1f}%, Average Loss: {test_loss:>8f}")
     return test_loss,correct
 
 def train_val_loop(model,settings,dataloaders,n,logs=[[[],[]],[[],[]]]):
@@ -69,7 +69,7 @@ def train_val_loop(model,settings,dataloaders,n,logs=[[[],[]],[[],[]]]):
     # get the configs for the training and testing
     train_config,test_config = settings
     for i in range(n):
-        print(f"Epoch : {i+1}")
+        print(f"---| Epoch : {i+1} |---")
         train_loss,train_acc = train(train_data, model,*train_config)
         logs[0][0].append(train_loss)
         logs[0][1].append(train_acc)

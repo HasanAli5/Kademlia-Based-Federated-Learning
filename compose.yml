@@ -22,7 +22,7 @@ services:
     devices:
       - nvidia.com/gpu=all 
     deploy:
-      replicas: 4
+      replicas: 10
       resources:
         reservations:
           devices:

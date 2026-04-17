@@ -1,15 +1,15 @@
 import asyncio
-import threading
 from argparse import ArgumentParser
 from kademlia.network import Server
 from medmnist import ChestMNIST
 from torch.utils.data.dataset import Subset
 
 from model import ResNet18
-from network import *
+import network
 from train import *
 from aggregate import * 
 from broadcast import *
+from broadcast_alt import Broadcast as aBroadcast
 
 from datetime import datetime
 
@@ -60,31 +60,46 @@ async def cycle(model,dataloaders,node:Server,broadcast:Broadcast,ns_number):
           f"Leading : {leading}")
     
     # initialise sharing node
-    aggregation_node = Server()
-    aggregation_broadcast = Broadcast(aggregation_node,8889,20)
+    aggregation_node = Server(ksize=5)
+    aggregation_broadcast = aBroadcast(aggregation_node,8889,20)
 
     aggregation_relay_task = loop.create_task(aggregation_broadcast.start())
 
     # if denied then wait for the signal to connect instead
     if denied or not leading:
         leader_ip,leader_port = await aggregate.wait_for_leader(broadcast)
-        await connect(aggregation_node,8561,leader_ip,leader_port)
+        await network.connect(aggregation_node,8561,leader_ip,leader_port)
     # else create network
     elif not denied and leading:
-        await create(aggregation_node,8561)
-        #send the join advert
+        await network.create(aggregation_node,8561)
+        #send the join advert with the new port
         await aggregate.send_join_request(broadcast,8561)
 
     # do whole aggregation process.
-    await aggregate.aggregation()
-        
-    # one node drops out of network while other stays to aggregate further
+    pair_deny_task = await aggregate.aggregation(aggregation_node,aggregation_broadcast)
 
+
+    # one node drops out of network while other stays to aggregate further
+    
+    # await some sharing method that is waiting for the global model 
+
+    #once we recieve the final global model we stop aggregation tasks entirely and move onto the sharing step
     aggregation_relay_task.cancel()
     try: await aggregation_relay_task
     except asyncio.CancelledError: print("Stopped Aggregation Relay")
 
     # [SHARING STAGE]
+
+    # pass the parcel sort of situation where any who has the model passes it to then next until everyone has it.
+    # we achieve 100% spread by determining if neighbouring nodes have the model or not (also if recieving)
+    # if a node is recieving then we add then to the back of the checking queue for later checking.
+    # we of course give timeout between each check in
+
+    # we can end once the node has shared to all neighbouring nodes and go to the next cycle.
+    # once finished to do the same syncing requesting as we did before aggregation step
+    # once a node is done sharing it request to end.
+    # if the request is not denied then it does end however if there are node still sharing the request will be denied
+    # thus ensuring that node will end at similar times.
     
     # leaves one that will start to distibute the agregated result
 
@@ -128,10 +143,13 @@ if __name__ == "__main__":
     val_dl = DataLoader(Subset(val_data,random.sample(range(len(val_data)), 4096)),batch_size=1024,shuffle=True)
     
     # initialise a model
-    model = ResNet18(channels=channels,classes=classes).to(device)
+    model = ResNet18(channels=channels,classes=classes)
+    model.parameters()
+    
+    model.to(device)
 
     # start server
-    node = Server()
+    node = Server(ksize=5)
 
     # north star number
     ns_number = -1
@@ -140,7 +158,7 @@ if __name__ == "__main__":
     if args.ip is None or args.port is None:
         # create
         ns_number = random.randint(0,2**160)
-        loop.run_until_complete(create(node,args.nodeport))
+        loop.run_until_complete(network.create(node,args.nodeport))
         ns_number_set = False
         while not ns_number_set:
             ns_number_set = loop.run_until_complete(node.set("ns_number",f"{ns_number}"))
@@ -151,7 +169,7 @@ if __name__ == "__main__":
                 print(f"ns_number set : {ns_number}")
     else:
         # connect
-        loop.run_until_complete(connect(node,args.nodeport,args.ip,args.port))
+        loop.run_until_complete(network.connect(node,args.nodeport,args.ip,args.port))
         while ns_number<0:
             res = loop.run_until_complete(node.get("ns_number"))
             if res is not None:

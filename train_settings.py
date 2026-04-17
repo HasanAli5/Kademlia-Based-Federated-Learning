@@ -26,10 +26,10 @@ class Train_Settings():
             self.loss,
             self.device,
             self.optimiser
-            )
+        )
     
     def test_export(self):
         return (
             self.loss,
             self.device
-            )
+        )
