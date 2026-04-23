@@ -88,3 +88,33 @@ class ResNet18(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
+    
+
+
+class CNNBasic(nn.Module):
+    # this is a basic model with reduced parameter for testing transfering and aggregration methods
+    
+    def __init__(self,channels,classes):
+        super().__init__()
+        
+        self.conv1 = nn.Conv2d(in_channels=channels,out_channels=64,kernel_size=7,stride=2,padding=3)
+        self.bn1 = nn.BatchNorm2d(num_features=64)
+        self.conv2 = nn.Conv2d(in_channels=64,out_channels=64,kernel_size=7,stride=2,padding=3)
+        self.bn2 = nn.BatchNorm2d(num_features=64)
+        self.avgpool = nn.AdaptiveAvgPool2d((1,1))
+        self.flatten = nn.Flatten()
+        self.fc = nn.Linear(in_features=64,out_features=classes)
+
+        self.relu = nn.ReLU()
+
+    def forward(self,x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x

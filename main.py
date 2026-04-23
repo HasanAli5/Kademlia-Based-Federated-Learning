@@ -1,197 +1,232 @@
+from ast import mod
 import asyncio
-from argparse import ArgumentParser
+import random
+from tracemalloc import stop
+from typing import Type
 from kademlia.network import Server
-from medmnist import ChestMNIST
-from torch.utils.data.dataset import Subset
+from argparse import ArgumentParser
 
-from model import ResNet18
+# custom
+from model import ResNet18,CNNBasic
 import network
-from train import *
-from aggregate import * 
 from broadcast import *
 from broadcast_alt import Broadcast as aBroadcast
+from train import *
+from aggregate import *
+from sharing import * 
 
-from datetime import datetime
+# ports
+BROADCAST_PORT = 8888
+KADEMLIA_PORT = 8560
+A_BROADCAST_PORT = 8889
+A_KADEMLIA_PORT = 8561
 
-from torchvision.transforms import v2
+async def stop_task(task:asyncio.Task,name:str):
+    task.cancel()
+    try: await task
+    except asyncio.CancelledError: print(f"[CYCLE] Stopped waiting for {name} to cancel")
 
-import random
 
-
-# this will have the main loop that will be carried out
-
-async def cycle(model,dataloaders,node:Server,broadcast:Broadcast,ns_number):
-
-    loop = asyncio.get_event_loop()
-    # import model from file?
-
+async def cycle(model_toolbox:Model_Manager,data_toolbox:Data_Manager,broadcast:Broadcast,ns_number:int):
     # [TRAINING STAGE]
-    print("[TRAINING STAGE]")
+    print("[CYCLE] [TRAINING STAGE]")
 
     train = Training_Stage()
 
     # start deny routine
-    deny_task = loop.create_task(train.deny_aggregate_request(broadcast))
+    deny_task = asyncio.create_task(train.deny_aggregate_request(broadcast,cooldown=2))
+    start_training_response_task = asyncio.create_task(train.training_responding(broadcast,cooldown=2))
+
+    await train.training_requesting(broadcast,resend_wait=30,cooldown=2)
 
     # start the train corutine
-    await train.training(model,dataloaders)
+    await train.training(model_toolbox.model,data_toolbox,model_toolbox,epochs=1)
 
     # cancel deny after training complete
-    deny_task.cancel()
-    try: await deny_task
-    except asyncio.CancelledError: print("Stopped waiting for deny_task to cancel")
+    await stop_task(deny_task,"deny_task")
 
+    # cleanup from last cycle
+    await broadcast.clear_message_by_stage("share")
     # [AGGREGATION STAGE]
-    print("[AGGREGATION STAGE]")
+    print("[CYCLE] [AGGREGATION STAGE]")
 
     aggregate = Aggregate_Stage()
 
     # send aggregation request if possible to start network
-    await aggregate.aggregate_request(broadcast)
+    
     # get all denied request with a certain timeframe
-    denied = await aggregate.await_aggregate_response(broadcast)
+    denied = await aggregate.await_aggregate_response(broadcast,wait_time=30,cooldown=2)
 
     # solve potential tied last using ns_number
-    leading = False
+    
     if not denied:
-        leading = await aggregate.is_leader(node,broadcast,ns_number)
+        leading = await aggregate.is_leader(broadcast,ns_number)
+    else:
+        leading = False
 
-    print(f"Denied : {denied}\n"+
-          f"Leading : {leading}")
+    start_training_response_task.cancel()
+    try: await start_training_response_task
+    except asyncio.CancelledError: print("[CYCLE] Stopped waiting for start_training_response_task to cancel")
+    await broadcast.clear_message_by_stage("train")
+
+    print(f"[CYCLE] Denied : {denied}\n"+
+          f"[CYCLE] Leading : {leading}")
     
     # initialise sharing node
-    aggregation_node = Server(ksize=5)
-    aggregation_broadcast = aBroadcast(aggregation_node,8889,20)
+    aggregation_node = Server(ksize=4)
+    aggregation_broadcast = aBroadcast(aggregation_node,port=A_BROADCAST_PORT,max_length=50)
 
-    aggregation_relay_task = loop.create_task(aggregation_broadcast.start())
+    print("[CYCLE] made aggregation node")
+
+    aggregation_relay_task = asyncio.create_task(aggregation_broadcast.start())
 
     # if denied then wait for the signal to connect instead
     if denied or not leading:
-        leader_ip,leader_port = await aggregate.wait_for_leader(broadcast)
-        await network.connect(aggregation_node,8561,leader_ip,leader_port)
+        leader_ip,leader_port = await aggregate.wait_for_leader(broadcast,cooldown=2)
+        await network.connect(aggregation_node,node_port=A_KADEMLIA_PORT,peer_ip=leader_ip,peer_port=leader_port)
     # else create network
     elif not denied and leading:
-        await network.create(aggregation_node,8561)
+        await network.create(aggregation_node,A_KADEMLIA_PORT)
         #send the join advert with the new port
-        await aggregate.send_join_request(broadcast,8561)
+        await aggregate.send_join_request(broadcast,A_KADEMLIA_PORT)
+
+    aggregate.set_denial_task(aggregation_broadcast,cooldown=2)
 
     # do whole aggregation process.
-    pair_deny_task = await aggregate.aggregation(aggregation_node,aggregation_broadcast)
+    model = await aggregate.aggregation(aggregation_broadcast,model_toolbox.model,ns_number)
 
+    not_in_task = asyncio.create_task(aggregate.response_not_in(aggregation_broadcast,cooldown=2))
 
-    # one node drops out of network while other stays to aggregate further
+    # get rid message that may be around after aggregation
+    await broadcast.clear_message_by_stage("train")
     
-    # await some sharing method that is waiting for the global model 
-
-    #once we recieve the final global model we stop aggregation tasks entirely and move onto the sharing step
-    aggregation_relay_task.cancel()
-    try: await aggregation_relay_task
-    except asyncio.CancelledError: print("Stopped Aggregation Relay")
-
     # [SHARING STAGE]
 
-    # pass the parcel sort of situation where any who has the model passes it to then next until everyone has it.
-    # we achieve 100% spread by determining if neighbouring nodes have the model or not (also if recieving)
-    # if a node is recieving then we add then to the back of the checking queue for later checking.
-    # we of course give timeout between each check in
+    sharing = Sharing_Stage()
 
-    # we can end once the node has shared to all neighbouring nodes and go to the next cycle.
-    # once finished to do the same syncing requesting as we did before aggregation step
-    # once a node is done sharing it request to end.
-    # if the request is not denied then it does end however if there are node still sharing the request will be denied
-    # thus ensuring that node will end at similar times.
+    not_ready_task = asyncio.create_task(sharing.send_not_ready_response(broadcast,cooldown=2))
+
+    if model is not None:
+        new_ns_number = random.randint(0,2**160)
+        await broadcast.node.set("ns_number",str(ns_number))
+
+    while model == None:
+        print("[CYCLE] waiting for a model")
+        model,new_ns_number = await sharing.share_model_reponse(broadcast)
+
+    print("[CYCLE] sending global model to neighbours")
+
+    await aggregate.stop_denial_task()
+    await stop_task(not_in_task,"not_in_task")
+
+    share_responder_task = asyncio.create_task(sharing.share_model_reponse(broadcast))
+    await sharing.send_share_model_request(broadcast,new_ns_number)
+    await sharing.check_accept_models(broadcast,model,new_ns_number,k=4)
+
+    await stop_task(not_ready_task,"not_ready")
+
+    is_ready = await sharing.get_ready_response(broadcast,2,60)
+    if is_ready:
+        # we send the global request to go
+        await sharing.send_go_request(broadcast,cooldown=2)
+    else:
+        await sharing.wait_for_last(broadcast,cooldown=2)
+
+    await stop_task(share_responder_task,"share_responder_task")
+
+    await stop_task(aggregation_relay_task,"aggregation_relay_task")
+
+    aggregation_node.stop()
+
+    await broadcast.clear_message_by_stage("aggregate")
+    print(f"[CYCLE] Cycle Ended")
+    model_toolbox.save_logs()
+    return new_ns_number
+
+
+def make_model(model_class:Type[nn.Module],classes:int,channels:int):
+    # get device info
+    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu" # type: ignore
+    # initialise a model
+    #model = ResNet18(channels=channels,classes=classes)
+    model = model_class(channels=channels,classes=classes)
+    model.parameters()
+    model.to(device)
+    return model
+
+
+async def connect_to_kademlia(node:Server,nodeport:int,ip:str|None=None,port:int|None=None):
+    # north star number
+    ns_number = -1
+    # start either connect / create network
+    if ip is None or port is None:
+        # create
+        ns_number = random.randint(0,2**160)
+        await network.create(node,nodeport)
+        ns_number_set = False
+        while not ns_number_set:
+            ns_number_set = await node.set("ns_number",str(ns_number))
+            if not ns_number_set:
+                print("[connect_to_kademlia] not found so on 5 second timeout")
+                await asyncio.sleep(5)
+            else:
+                print(f"[connect_to_kademlia] ns_number set : {ns_number}")
+    else:
+        # connect
+        await network.connect(node,nodeport,ip,port)
+        while ns_number<0:
+            res = await node.get("ns_number")
+            if res is not None:
+                ns_number = int(res)
+            if ns_number<0:
+                print("[connect_to_kademlia] not found so on 5 second timeout")
+                await asyncio.sleep(5)
+        print(f"[connect_to_kademlia] ns_number found : {ns_number}")
+    return ns_number
+
+async def main(args):
+    # start model stuff
+
+    data_toolbox = Data_Manager()
+
+    classes = len(data_toolbox.train_data.info["label"])
+    channels = data_toolbox.train_data.info["n_channels"]
+
+    model = make_model(CNNBasic,classes,channels)
+
+    model_toolbox = Model_Manager(model,learning_rate=1e-5,decay_rate=1e-3)
     
-    # leaves one that will start to distibute the agregated result
+    # start server
+    node = Server(ksize=4)
 
-    print(f"Cycle Ended")
+    ns_number = await connect_to_kademlia(node,args.nodeport,args.ip,args.port)
 
+    # start relay system coroutine
+    relay = Broadcast(node,port=BROADCAST_PORT,max_length=50)
+    relay_task = asyncio.create_task(relay.start())
+
+    # Run Cycles
+    try:
+        while True:
+            ns_number = await cycle(model_toolbox,data_toolbox,relay,ns_number)
+    except KeyboardInterrupt:
+        print("[MAIN] Interrupted")
+    finally:
+        await relay.end()
+        node.stop()
+        relay_task.cancel()
+        try: await relay_task
+        except asyncio.CancelledError: print("[MAIN] Stopped Relay")
+        
 if __name__ == "__main__":
 
     # Arguement Parser
     parser = ArgumentParser()
-    parser.add_argument("-np","--nodeport",default = 8560)
+    parser.add_argument("-np","--nodeport",default = KADEMLIA_PORT)
     parser.add_argument("-i", "--ip", default=get_host())
     parser.add_argument("-p", "--port", default=None)
     args = parser.parse_args()
 
-    # Event Loop
-    loop = asyncio.new_event_loop()
-    loop.set_debug(True)
-    asyncio.set_event_loop(loop)
+    asyncio.run(main(args))
 
-    # start model stuff
-
-    # get device info
-    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
-    print(f"[{datetime.now().isoformat(" ")}] device : {device}")
-
-    # image transform
-    tf = v2.Compose([
-        v2.ToImage(),
-        v2.ToDtype(torch.float32,scale=True)
-    ])
-
-    # data
-    train_data,val_data = ChestMNIST("train",transform=tf,download=True),ChestMNIST("val",transform=tf,download=True)
-
-    # get the required parameters for model
-    classes = len(train_data.info["label"])
-    channels = val_data.info["n_channels"]
-
-    # data loaders
-    train_dl = DataLoader(Subset(train_data,random.sample(range(len(train_data)), 4096)),batch_size=1024,shuffle=True)
-    val_dl = DataLoader(Subset(val_data,random.sample(range(len(val_data)), 4096)),batch_size=1024,shuffle=True)
     
-    # initialise a model
-    model = ResNet18(channels=channels,classes=classes)
-    model.parameters()
-    
-    model.to(device)
-
-    # start server
-    node = Server(ksize=5)
-
-    # north star number
-    ns_number = -1
-
-    # start either connect / create network
-    if args.ip is None or args.port is None:
-        # create
-        ns_number = random.randint(0,2**160)
-        loop.run_until_complete(network.create(node,args.nodeport))
-        ns_number_set = False
-        while not ns_number_set:
-            ns_number_set = loop.run_until_complete(node.set("ns_number",f"{ns_number}"))
-            if not ns_number_set:
-                print("not found so on 5 second timeout")
-                loop.run_until_complete(asyncio.sleep(5))
-            else:
-                print(f"ns_number set : {ns_number}")
-    else:
-        # connect
-        loop.run_until_complete(network.connect(node,args.nodeport,args.ip,args.port))
-        while ns_number<0:
-            res = loop.run_until_complete(node.get("ns_number"))
-            if res is not None:
-                ns_number = int(res)
-            if ns_number<0:
-                print("not found so on 5 second timeout")
-                loop.run_until_complete(asyncio.sleep(5))
-        print(f"ns_number found : {ns_number}")
-    
-    # start relay system coroutine
-    relay = Broadcast(node,8888,20)
-    relay_task = loop.create_task(relay.start())
-
-    # Run Cycles
-    try:
-        loop.run_until_complete(cycle(model,(train_dl,val_dl),node,relay,ns_number))
-    except KeyboardInterrupt:
-        pass
-    finally:
-        relay_task.cancel()
-        try: loop.run_until_complete(relay_task)
-        except asyncio.CancelledError: print("Stopped Relay")
-        relay.end()
-        node.stop()
-        loop.close()
