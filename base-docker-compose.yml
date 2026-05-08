@@ -1,0 +1,29 @@
+services:
+  img-builder:
+    build: 
+      context: .
+      dockerfile: .dockerfile
+    image: federated-node:latest
+
+
+  base-node:
+    image: federated-node:latest
+    volumes:
+      - ./results:/app/results:z
+      - ./data:/app/data:z
+    environment:
+      PEERS: ${PEERS}
+      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+    devices:
+      - nvidia.com/gpu=all
+    security_opt:
+      - label=disable
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

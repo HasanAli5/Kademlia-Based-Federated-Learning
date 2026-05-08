@@ -12,7 +12,7 @@ from torch.utils.data.dataloader import DataLoader
 # setting for the model training.
 class Data_Manager():
 
-    def __init__(self):
+    def __init__(self,test:bool):
         tf = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32,scale=True)
@@ -21,6 +21,7 @@ class Data_Manager():
         self.val_data = ChestMNIST(split='val',transform=tf,root="./data")
         self.train_subset = None
         self.val_subset = None
+        self.test = test
 
         self.peer_split()
     
@@ -30,14 +31,18 @@ class Data_Manager():
     def set_v_subset(self,indices:list):
         self.val_subset = Subset(self.val_data,indices)
 
-    def data_split(self,indices:list,peers:int,peer_id:int):
+    def data_split(self,indices:list,peers:int,peer_id:int,test:bool=False):
         split_size = len(indices)//peers
         start = peer_id * split_size
-        if peers - 1 == peer_id:
-            # last
-            end = len(indices)
+        if test:
+            # only take like 128 samples for testing purposes
+            end = start + 4096
         else:
-            end = (peer_id + 1) * split_size
+            if peers - 1 == peer_id:
+                # last
+                end = len(indices)
+            else:
+                end = (peer_id + 1) * split_size
         return indices[start:end]
 
     def peer_split(self):
@@ -55,8 +60,8 @@ class Data_Manager():
             rand.shuffle(train_indicies)
             rand.shuffle(val_indicies)
 
-            self.set_t_subset(self.data_split(train_indicies,int(peers),int(peer_id)))
-            self.set_v_subset(self.data_split(val_indicies,int(peers),int(peer_id)))
+            self.set_t_subset(self.data_split(train_indicies,int(peers),int(peer_id),self.test))
+            self.set_v_subset(self.data_split(val_indicies,int(peers),int(peer_id),self.test))
             
     def get_dataloaders(self,batch_size:int):
         tdata = self.train_subset if self.train_subset else self.train_data

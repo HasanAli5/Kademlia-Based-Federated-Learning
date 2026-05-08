@@ -2,211 +2,93 @@
 services:
 
   node_1:
-    build: 
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_1
     command: python main.py -np 8650
     environment:
-      PEERS: ${PEERS}
       PEER_ID: 0
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   node_2:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_2
     command: python main.py -np 8650 -i node_1 -p 8650
     environment:
-      PEERS: ${PEERS}
       PEER_ID: 1
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   node_3:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_3
     command: python main.py -np 8650 -i node_1 -p 8650
     environment:
-      PEERS: ${PEERS}
       PEER_ID: 2
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+
 
   node_4:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_4
     command: python main.py -np 8650 -i node_1 -p 8650
     environment:
-      PEERS: ${PEERS}
       PEER_ID: 3
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   node_5:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_5
     command: python main.py -np 8650 -i node_1 -p 8650
     environment:
-      PEERS: ${PEERS}
       PEER_ID: 4
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
-  node_6:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
-    command: python main.py -np 8650 -i node_1 -p 8650
-    environment:
-      PEERS: ${PEERS}
-      PEER_ID: 5
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+#  node_6:
+#    extends:
+#     file: base-docker-compose.yml
+#     service: base-node
+#    container_name: node_6
+#    command: python main.py -np 8650 -i node_1 -p 8650
+#    environment:
+#      PEER_ID: 5
 
-  node_7:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
-    command: python main.py -np 8650 -i node_1 -p 8650
-    environment:
-      PEERS: ${PEERS}
-      PEER_ID: 6
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
-  node_8:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
-    command: python main.py -np 8650 -i node_1 -p 8650
-    environment:
-      PEERS: ${PEERS}
-      PEER_ID: 7
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+#  node_7:
+#    extends:
+#     file: base-docker-compose.yml
+#     service: base-node
+#    container_name: node_7
+#    command: python main.py -np 8650 -i node_1 -p 8650
+#    environment:
+#      PEER_ID: 6
 
-  node_9:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
-    command: python main.py -np 8650 -i node_1 -p 8650
-    environment:
-      PEERS: ${PEERS}
-      PEER_ID: 8
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+#  node_8:
+#    extends:
+#     file: base-docker-compose.yml
+#     service: base-node
+#    container_name: node_8
+#    command: python main.py -np 8650 -i node_1 -p 8650
+#    environment:
+#      PEER_ID: 7
 
-  node_10:
-    build:
-      context: .
-      dockerfile: .dockerfile
-    volumes:
-      - ./results:/app/results
-    command: python main.py -np 8650 -i node_1 -p 8650
-    environment:
-      PEERS: ${PEERS}
-      PEER_ID: 9
-      SEEDED_RANDOM_DATASET_SPLIT: ${SEEDED_RANDOM_DATASET_SPLIT}
-    devices:
-      - nvidia.com/gpu=all 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+#  node_9:
+#    extends:
+#     file: base-docker-compose.yml
+#     service: base-node
+#    container_name: node_9
+#    command: python main.py -np 8650 -i node_1 -p 8650
+#    environment:
+#      PEER_ID: 8
+
+#  node_10:
+#    extends:
+#     file: base-docker-compose.yml
+#     service: base-node
+#    container_name: node_10
+#    command: python main.py -np 8650 -i node_1 -p 8650
+#    environment:
+#      PEER_ID: 9

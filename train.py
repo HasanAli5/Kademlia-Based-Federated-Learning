@@ -1,78 +1,70 @@
-# we will split the client data up by 10 segments and let the individual train on selected amount of data.
-
-import broadcast
-from data_manage import Data_Manager
-from model_functions import train_val_loop
-import torch
 import asyncio
-from torch import nn
-from broadcast import *
 import json
+import time
 
+from torch import nn
+from typing import Any
+
+from network import Network
+from data_manage import Data_Manager
 from model_manage import Model_Manager
+from model_functions import train_val_loop
 
-class Training_Stage():
 
-    def __init__(self):
+class Train():
+
+    def __init__(self,network:Network):
+
+        # this is the main network class not the aggregation one
+        self.network = network
+
+        self.STATE_INACTIVE = 0
+        self.STATE_PENDING = 1
+        self.STATE_ACTIVE = 2
+        self.STATE_WAITING = 3
+
+        # state parameter
+        self.state = self.STATE_INACTIVE
+        self.state_lock = asyncio.Lock()
+
+        # trained parameter
         self.trained = False
         self.trained_lock = asyncio.Lock()
+
+        # holds the active responder task that will be active throughout to answer training requests
+        self.train_responder_task = None
+
+        # static request/response data
         self.stage_data = {
             'stage':'train'
         }
-
-    async def start_training_request(self,broadcast:Broadcast):
-        request_data = {
-            'request':'start_training'
-        }
-        request_data.update(self.stage_data)
-        data = broadcast.make_message(relay=True,extra_data=request_data)
-        await broadcast.relay(json.dumps(data))
-
-    async def training_responding(self,broadcast:Broadcast,cooldown:int):
-        response_data = {
-            'response':'start_training'
-        }
-        response_data.update(self.stage_data)
-        while True:
-            training_requests = await broadcast.find_messages("request","start_training")
-            for message,msg in training_requests:
-                peer = (msg.get("source_ip"),msg.get("source_port"))
-                if peer[0] and peer[1]:
-                    data = broadcast.make_message(relay=True,extra_data=response_data)
-                    await broadcast.send(peer[0],peer[1],json.dumps(data),relay=False)
-            await broadcast.clean_up_from_list(training_requests)
-            await asyncio.sleep(cooldown)
-
-    async def training_requesting(self,broadcast:Broadcast,resend_wait:int,cooldown:int):
-        deadline = time.time() + resend_wait
-        await self.start_training_request(broadcast)
-        await asyncio.sleep(cooldown)
-        while True:
-            training_requests = await broadcast.find_messages("response","start_training")
-            if len(training_requests)>0:
-                await broadcast.clean_up_from_list(training_requests)
-                return
-            await broadcast.clean_up_from_list(training_requests)
-            await asyncio.sleep(cooldown)
-            if time.time() > deadline:
-                await self.start_training_request(broadcast)
-                deadline = time.time() + resend_wait
-
-
-    async def training(self,model:nn.Module,data_toolbox:Data_Manager,model_toolbox:Model_Manager,epochs:int):
-
-        train_dl,val_dl = data_toolbox.get_dataloaders(32)
-
-        config = model_toolbox.get_config()
         
-        training_task = asyncio.to_thread(train_val_loop,model,config,(train_dl,val_dl),epochs,model_toolbox.logs)
+        self.start_train_request = {
+            'request':'start'
+        }
+        self.start_train_request.update(self.stage_data)
 
-        try:
-            await training_task
-            await self.set_trained(True)
-        except Exception as e:
-            print(f"[Training] Exception : {e}")
+        self.start_train_response = {
+            'response':'start'
+        }
+        self.start_train_response.update(self.stage_data)
 
+        self.end_train_request = {
+            'request':'end'
+        }
+        self.end_train_request.update(self.stage_data)
+
+        self.end_train_response = {
+            'response':'end'
+        }
+        self.end_train_response.update(self.stage_data)
+
+        self.next_stage_request = {
+            'request':'next_stage'
+        }
+        self.next_stage_request.update(self.stage_data)
+
+    # setters/getters
     async def get_trained(self):
         async with self.trained_lock:
             return self.trained
@@ -81,23 +73,133 @@ class Training_Stage():
         async with self.trained_lock:
             self.trained = value
 
-    async def deny_aggregate_request(self,broadcast:Broadcast,cooldown:int):
+    async def get_state(self):
+        async with self.state_lock:
+            return self.state
+    
+    async def set_state(self,value:int):
+        async with self.state_lock:
+            self.state = value
+
+    async def start_responder_task(self):
+        pass
+
+    async def end_responder_task(self):
+        pass
+
+    # send functions
+
+    async def send_train_request(self):
+        data = await self.network.make_message(relay=True,extra_data=self.start_train_request)
+        await self.network.relay(json.dumps(data))
+        return data.get("timestamp")
+
+    async def send_train_response(self,ip:str,port:int,request_timestamp:float):
+        data:dict[str,Any] = {
+            'status': await self.get_state()
+        }
+        data = self.network.attach_request_info(data,request_timestamp)
+        data.update(self.start_train_response)
+        full_msg = await self.network.make_message(relay=False,extra_data=data)
+        await self.network.send(ip,port,json.dumps(full_msg))
+        return full_msg.get("timestamp")
+
+    # main responder function
+
+    async def shield_wrap(self,coro):
+        return await asyncio.shield(coro)
+    
+    async def responder(self,cooldown:int):
+        pending_responses = set()
+        try:
+            while True:
+                training_requests = await self.network.find_messages(self.start_train_request)
+                for message,msg in training_requests:
+                    peer = (msg.get("source_ip"),msg.get("source_port"),msg.get("timestamp"))
+                    if peer[0] and peer[1] and peer[2]:
+                        pending_task = asyncio.create_task(self.shield_wrap(self.send_train_response(peer[0],peer[1],peer[2])))
+                        pending_responses.add(pending_task)
+                        pending_task.add_done_callback(pending_responses.discard)
+                await self.network.clean_up_from_list(training_requests)
+                await asyncio.sleep(cooldown)
+        finally:
+            if pending_responses:
+                await asyncio.gather(*pending_responses,return_exceptions=True)
+
+    # main sync function
+
+    async def request_to_train(self,response_wait:int,exit_wait:int,cooldown:int):
+        timestamp = await self.send_train_request()
+        await asyncio.sleep(cooldown)
+        recast_deadline = time.time() + response_wait
+        exit_deadline = None
+        while not exit_deadline or time.time() < exit_deadline:
+            # get all train responses
+            training_responses = await self.network.find_messages(self.start_train_response)
+            # iterated through
+            for _,msg in training_responses:
+                # for this request
+                if timestamp == msg.get("request_timestamp"):
+                    status = msg.get("status")
+                    # if the 
+                    if status == self.STATE_INACTIVE or status == self.STATE_WAITING:
+                        # if the nodes are either not in or leaving the stage go to share
+                        await self.network.clean_up_from_list(training_responses)
+                        return False
+                    else:
+                        exit_deadline = time.time() + exit_wait
+                        recast_deadline = None
+            await self.network.clean_up_from_list(training_responses)
+            
+            # resend if there is no response in a timeframe
+            if recast_deadline and time.time() > recast_deadline:
+                await self.send_train_request()
+                recast_deadline = time.time() + response_wait
+
+            await asyncio.sleep(cooldown)
+        return True
+
+    # main action function
+
+    async def training(self,model:nn.Module,data_toolbox:Data_Manager,model_toolbox:Model_Manager,epochs:int):
+
+        model.to(model_toolbox.device)
+
+        train_dl,val_dl = data_toolbox.get_dataloaders(32)
+
+        config = model_toolbox.get_config()
+        
+        training_task = asyncio.to_thread(train_val_loop,model,config,(train_dl,val_dl),epochs,model_toolbox.logs)
+
+        try:
+            model_toolbox.logs = await training_task
+            await self.set_trained(True)
+        except Exception as e:
+            print(f"[Training] Exception : {e}")
+
+        model.to('cpu')
+
+    async def deny_aggregate_request(self,cooldown:int):
         response_data = {
             'response':'deny_aggregate',
             }
         response_data.update(self.stage_data)
         try:
             while True:
-                deny_list = await broadcast.find_messages("request","aggregate")
+                deny_list = await self.network.find_messages({"request":"leader"})
                 for message,msg in deny_list:
-                    print("[deny_aggregate_request] found aggregate request")
+                    print("[deny_aggregate_request] found leader request")
                     ip = msg.get("source_ip")
                     port = msg.get("source_port")
-                    if ip and port:
-                        data = broadcast.make_message(relay=False,extra_data=response_data)
-                        await broadcast.send(ip,port,json.dumps(data))
-                        print(f"[deny_aggregate_request] denied aggregate request : {ip}")
-                await broadcast.clean_up_from_list(deny_list)
+                    ts = msg.get("timestamp")
+                    if ip and port and ts:
+                        data = await self.network.make_message(relay=False,extra_data=response_data)
+                        data = self.network.attach_request_info(data,ts)
+                        await self.network.send(ip,port,json.dumps(data))
+                        print(f"\n [deny_aggregate_request] denied aggregate request : {ip}\n")
+                await self.network.clean_up_from_list(deny_list)
                 await asyncio.sleep(cooldown)
         except Exception as e:
             print(f"[deny_aggregate_request] Exception : {e}")
+
+    

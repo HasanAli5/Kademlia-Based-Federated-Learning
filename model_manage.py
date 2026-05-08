@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import time
 
+from sympy import print_rcode
 import torch
 import os
 
@@ -13,9 +14,9 @@ class Model_Manager():
     def __init__(self,model:torch.nn.Module,
                  learning_rate:float = 1e-3,
                  decay_rate:float = 0):
-        self.device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "CPU" # type: ignore
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         # model is not used for training just parameters
-        self.model = model.to(self.device)
+        self.model = model
         self.loss = torch.nn.BCEWithLogitsLoss()
         self.learning_rate = learning_rate
         self.decay_rate = decay_rate
@@ -41,14 +42,22 @@ class Model_Manager():
         folder_name = f"node_{peer_id}" if peer_id else "node_pile"
 
         folder_path = Path("./results") / folder_name
-        folder_path.mkdir(parents=True,exist_ok=True)
 
-        timestamp = time.time()
-        file_name = f"log_{timestamp}.txt"
-        filepath = folder_path / file_name
-        try:
-            f = open(filepath,"w")
-            f.write(json.dumps(self.logs,indent=4))
-            f.close()
-        except Exception as e:
-            print(f"[save_logs] Exception : {e}")
+        while True:
+            try:
+                folder_path.mkdir(parents=True,exist_ok=True)
+
+                timestamp = time.time()
+                file_name = f"log_{timestamp}.txt"
+                filepath = folder_path / file_name
+                try:
+                    f = open(filepath,"w")
+                    f.write(json.dumps(self.logs,indent=4))
+                    f.close()
+                    return True
+                except Exception as e:
+                    print(f"[save_logs] Exception : {e}")
+                    return False
+            except Exception as e:
+                print(f"[save_logs] Folder Lock (Exception : {e})")
+                time.sleep(2)
