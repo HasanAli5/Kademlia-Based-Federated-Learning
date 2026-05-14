@@ -524,11 +524,6 @@ class Network():
             print(f"[send_model_request] Exception : {e}")
 
 
-    async def node_refresher(self,cycle_time):
-        while True:
-            await asyncio.sleep(60)
-            await self.refresh_routing_table()
-
     async def model_get(self):
 
         await self.send_model_request()
