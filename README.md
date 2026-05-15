@@ -44,7 +44,7 @@ To see the test results, check the following folders:
 
 ### Podman Log Results
 
-To see the calculations that proved O(LogN) communication overhead per node for kademlia-based federated learning look for the [podman_results.ipynb](./podman-logs/podman_results.ipynb) file.
+To see the calculations that to check for O(LogN) communication overhead per node for kademlia-based federated learning look for the [podman_results.ipynb](./podman-logs/10-nodes/podman_results.ipynb) file or check the podman-logs folder for the other checks.
 
 ## For Running Code
 
