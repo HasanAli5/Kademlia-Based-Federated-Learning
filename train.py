@@ -150,22 +150,23 @@ class Train():
 
     # main action function
 
-    async def training(self,model:nn.Module,data_toolbox:Data_Manager,model_toolbox:Model_Manager,epochs:int):
+    async def training(self,model:nn.Module,data_toolbox:Data_Manager,model_toolbox:Model_Manager,epochs:int,actual_train:bool=True):
+        # may not be actual train to test communication overhead
+        if actual_train:
+            model.to(model_toolbox.device)
 
-        model.to(model_toolbox.device)
+            train_dl,val_dl = data_toolbox.get_dataloaders()
 
-        train_dl,val_dl = data_toolbox.get_dataloaders()
+            config = model_toolbox.get_config()
+            
+            training_task = asyncio.to_thread(train_val_loop,model,config,(train_dl,val_dl),epochs,model_toolbox.logs,model_toolbox)
 
-        config = model_toolbox.get_config()
-        
-        training_task = asyncio.to_thread(train_val_loop,model,config,(train_dl,val_dl),epochs,model_toolbox.logs,model_toolbox)
-
-        try:
-            model_toolbox.logs = await training_task
-            model.to('cpu')
-            return
-        except Exception as e:
-            print(f"[Training] Exception : {e}")
+            try:
+                model_toolbox.logs = await training_task
+                model.to('cpu')
+                return
+            except Exception as e:
+                print(f"[Training] Exception : {e}")
         
 
     async def deny_aggregate_request(self,cooldown:int):

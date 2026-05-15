@@ -29,7 +29,7 @@ class Aggregate():
         self.a_kademlia_port = aggregation_kademlia_port
         self.model_port = model_port
 
-        self.aggregate_ksize = 5
+        self.aggregate_ksize = 20
 
         self.stage_data = {
             'stage':'aggregate'

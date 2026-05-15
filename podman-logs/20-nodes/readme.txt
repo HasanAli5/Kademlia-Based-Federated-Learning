@@ -1,0 +1,1 @@
+this is the podman logs after running 20 nodes through 10 communication round each being 1 epochs of fake local training to test communication overhead.

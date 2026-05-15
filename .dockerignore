@@ -11,3 +11,6 @@ __pycache__
 
 data/
 results/
+results_sim/
+results_centralised/
+podman-logs/

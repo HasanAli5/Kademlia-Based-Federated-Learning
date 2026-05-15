@@ -40,7 +40,7 @@ class Data_Manager():
         split_size = len(indices)//peers
         start = peer_id * split_size
         if test:
-            # only take like 128 samples for testing purposes
+            # only take like X samples for testing purposes
             end = start + 4096
         else:
             if peers - 1 == peer_id:

@@ -42,6 +42,10 @@ To see the test results, check the following folders:
 > [!NOTE]
 > If you are re-running the Jupyter Notebooks, it reproduces the results on execution, which takes a long time due to calculating validation accuracies and test accuracies to display them.
 
+### Podman Log Results
+
+To see the calculations that proved O(LogN) communication overhead per node for kademlia-based federated learning look for the [podman_results.ipynb](./podman-logs/podman_results.ipynb) file.
+
 ## For Running Code
 
 ### Kademlia-Based Federated Learning

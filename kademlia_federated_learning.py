@@ -6,7 +6,7 @@ from kademlia.network import Server
 import torch
 
 # custom
-from model import ResNet18,CNNBasic
+from model import ResNet18,CNNBasic,DummyModel
 from network import Network
 from train import *
 from aggregate import *
@@ -50,8 +50,9 @@ class Kademlia_Federated_Learning():
         self.aggregate = Aggregate(self.network,a_relay_port,a_kademlia_port,model_transfer_port)
         self.share = Share(self.network,model_transfer_port)
 
+        self.rounds = 20
         self.epochs = 5
-        self.minimum_train_wait = 60
+        self.minimum_train_wait = 30
 
         self.model_task = None
 
@@ -268,12 +269,15 @@ class Kademlia_Federated_Learning():
         await self.connect_to_kademlia(self.node,self.nodeport,self.ip,self.port)
         # Run Cycles
         try:
-            while True:
+            cycles = 0
+            while cycles < self.rounds:
+                print(f"[run] Round {cycles+1}")
                 await self.cycle()
+                cycles += 1
         except KeyboardInterrupt:
-            print("[MAIN] Interrupted")
-        #except Exception as e:
-        #    print(f"[run] Exception : {e}")
+            print("[run] Interrupted")
+        except Exception as e:
+            print(f"[run] Exception : {e}")
         finally:
             await self.stop()
 
@@ -282,4 +286,4 @@ class Kademlia_Federated_Learning():
         self.node.stop()
         self.relay_task.cancel()
         try: await self.relay_task
-        except asyncio.CancelledError: print("[MAIN] Stopped Relay")
+        except asyncio.CancelledError: print("[run] Stopped Relay")

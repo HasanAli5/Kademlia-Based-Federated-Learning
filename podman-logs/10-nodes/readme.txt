@@ -1,0 +1,2 @@
+this is the podman logs after running 10 nodes through 20 communication round each being 5 epochs of local training.
+so it totals around 100 epochs with some log overspill into the 101 epoch but it did not effect any results as i stopped the containers before the next epoch finished.

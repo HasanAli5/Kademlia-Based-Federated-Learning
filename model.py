@@ -118,3 +118,15 @@ class CNNBasic(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
+    
+class DummyModel(nn.Module):
+    # to test the high node amount
+    def __init__(self,channels,classes):
+        super().__init__()
+        self.avgpool = nn.AdaptiveAvgPool2d((1,1))
+        self.linear = nn.Linear(channels,classes)
+
+    def forward(self,x):
+        x = self.avgpool(x)
+        x = torch.flatten(x,1)
+        return self.linear(x)
