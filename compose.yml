@@ -47,48 +47,48 @@ services:
     environment:
       PEER_ID: 4
 
-#  node_6:
-#    extends:
-#     file: base-docker-compose.yml
-#     service: base-node
-#    container_name: node_6
-#    command: python main.py -np 8650 -i node_1 -p 8650
-#    environment:
-#      PEER_ID: 5
+  node_6:
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_6
+    command: python main.py -np 8650 -i node_1 -p 8650
+    environment:
+      PEER_ID: 5
 
 
-#  node_7:
-#    extends:
-#     file: base-docker-compose.yml
-#     service: base-node
-#    container_name: node_7
-#    command: python main.py -np 8650 -i node_1 -p 8650
-#    environment:
-#      PEER_ID: 6
+  node_7:
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_7
+    command: python main.py -np 8650 -i node_1 -p 8650
+    environment:
+      PEER_ID: 6
 
-#  node_8:
-#    extends:
-#     file: base-docker-compose.yml
-#     service: base-node
-#    container_name: node_8
-#    command: python main.py -np 8650 -i node_1 -p 8650
-#    environment:
-#      PEER_ID: 7
+  node_8:
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_8
+    command: python main.py -np 8650 -i node_1 -p 8650
+    environment:
+      PEER_ID: 7
 
-#  node_9:
-#    extends:
-#     file: base-docker-compose.yml
-#     service: base-node
-#    container_name: node_9
-#    command: python main.py -np 8650 -i node_1 -p 8650
-#    environment:
-#      PEER_ID: 8
+  node_9:
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_9
+    command: python main.py -np 8650 -i node_1 -p 8650
+    environment:
+      PEER_ID: 8
 
-#  node_10:
-#    extends:
-#     file: base-docker-compose.yml
-#     service: base-node
-#    container_name: node_10
-#    command: python main.py -np 8650 -i node_1 -p 8650
-#    environment:
-#      PEER_ID: 9
+  node_10:
+    extends:
+     file: base-docker-compose.yml
+     service: base-node
+    container_name: node_10
+    command: python main.py -np 8650 -i node_1 -p 8650
+    environment:
+      PEER_ID: 9

@@ -3,6 +3,8 @@ import torch
 # if the training_setting.py classes types are changed then these should be changed as well.
 from torch import sigmoid
 
+from model_manage import Model_Manager
+
 def correct_batch(pred,labels):
     total = 0.0
     for i in range(len(pred)):
@@ -63,7 +65,7 @@ def test(dataloader, model, loss_fn, device):
     print(f"Test Error: Accuracy: {(100*correct):>0.1f}%, Average Loss: {test_loss:>8f}")
     return test_loss,correct
 
-def train_val_loop(model,settings,dataloaders,n,logs=[[[],[]],[[],[]]]):
+def train_val_loop(model,settings,dataloaders,n,logs=[[[],[]],[[],[]]],model_toolbox:Model_Manager|None=None):
     # split the dataloader tuple
     train_data, val_data = dataloaders
     # get the configs for the training and testing
@@ -76,4 +78,6 @@ def train_val_loop(model,settings,dataloaders,n,logs=[[[],[]],[[],[]]]):
         val_loss,val_acc = test(val_data, model,*test_config)
         logs[1][0].append(val_loss)
         logs[1][1].append(val_acc)
+        if model_toolbox:
+            model_toolbox.save_best_local_model(model,val_acc)
     return logs

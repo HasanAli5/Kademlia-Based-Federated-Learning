@@ -1,7 +1,5 @@
 matplotlib
 medmnist
 kademlia
-safetensors
-
 torch
 torchvision

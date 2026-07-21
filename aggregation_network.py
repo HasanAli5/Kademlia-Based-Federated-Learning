@@ -19,24 +19,26 @@ class Network(BaseNetwork):
         self.paired_lock = Lock()
         
 
-    async def relay(self, message:str):
+    async def relay(self, message:str, sender_ip = None):
         msg:dict = json.loads(message)
-        
-        paired = await self.get_status()
-        is_pairing_request = msg.get("request")=="pair"
-        
-        source_node = msg.get("source_node_id")
-        if source_node:
-            is_owner = source_node == self.node.node.long_id
-        else:
-            is_owner = False
+        source_node = int(msg.get("source_node_id"))
+        is_owner = source_node == self.node.node.long_id
 
-        if is_pairing_request and not paired and not is_owner:
-            #print(f"[a_broadcast.relay] Node being Selfish. Pair Request {is_pairing_request} ,Paired : {paired}, Own message : {is_owner}")
-            pass
+        if is_owner:
+            await super().relay(message,sender_ip)
+            return
+
+        paired = await self.get_status()
+        is_pairing_request = msg.get("syn")=="pair"
+        leader = await self.is_leading_peer(self.node.node.long_id,source_node)
+        
+        if is_pairing_request and not leader and not paired:
+            # is selfish to make sure that it is able to take this request
+            print("[a_network.relay] keeping the request to itself")
+            return
         else:
-            #print(f"[a_broadcast.relay] Pair Request {is_pairing_request} ,Paired : {paired}, Own message : {is_owner}")
-            await super().relay(message)
+            await super().relay(message,sender_ip)
+            return
     
     async def set_status(self,value:bool):
         async with self.paired_lock:

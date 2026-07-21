@@ -1,4 +1,4 @@
-from csv import reader
+
 from typing import Any
 from kademlia.network import Server
 from kademlia.node import Node
@@ -7,7 +7,6 @@ import io
 import asyncio
 import json
 import socket
-import pickle
 import time
 import struct
 import copy
@@ -37,10 +36,12 @@ class Network():
         self.messages_lock = asyncio.Lock()
         self.ignores_lock = asyncio.Lock()
 
-        self.ns_number = -1
-        self.ns_number_ts = -1
+        self.ns_number = int(-1)
+        self.ns_number_ts = float(-1)
         self.ns_lock = asyncio.Lock()
         self.mtp = model_transfer_port
+
+        self.active_tasks = set()
 
     # get locks
 
@@ -81,8 +82,11 @@ class Network():
     # ignore functions
 
     def ignore_message(self,message:str):
+        data = json.loads(message)
         # if already there dont add
-        if hash(message) in self.ignore_lookup:
+        node_id = data.get("source_node_id")
+        ts = data.get("timestamp")
+        if f"[{node_id}]{ts}" in self.ignore_lookup:
             return
         
         # remove older message if full
@@ -91,11 +95,14 @@ class Network():
             self.ignore_lookup.discard(old_message)
         
         # add to the mesages
-        self.ignore_lookup.add(hash(message))
-        self.ignore_list.append(hash(message))
+        self.ignore_lookup.add(f"[{node_id}]{ts}")
+        self.ignore_list.append(f"[{node_id}]{ts}")
 
     def in_ignores(self,message:str):
-        return hash(message) in self.ignore_lookup
+        data = json.loads(message)
+        node_id = data.get("source_node_id")
+        ts = data.get("timestamp")
+        return f"[{node_id}]{ts}" in self.ignore_lookup
     
     # message => ignore list
 
@@ -123,8 +130,8 @@ class Network():
         data = {
             'source_ip':f'{self.get_host()}',
             'source_port':self.port,
-            'source_node_id':self.node.node.long_id,
-            'source_ns_number':ns_number,
+            'source_node_id':f"{self.node.node.long_id}",
+            'source_ns_number':f"{ns_number}",
             'source_ns_number_ts':ns_number_ts,
             'relay':relay,
             'timestamp':time.time()
@@ -194,7 +201,7 @@ class Network():
 
     # send
 
-    async def send(self,peer_ip:str,peer_port,message:str,relay=False):
+    async def send(self,peer_ip:str,peer_port,message:str,relay=False,sender_ip=None):
         if relay:
             print(f"[broadcast.send] relaying {peer_ip}:{peer_port} : {message}")
         else:
@@ -202,13 +209,15 @@ class Network():
 
         msg = self.convert_message(message)
 
-        if msg is None:
+        if msg == None:
+            return
+        elif msg.get("source_ip") == peer_ip:
+            print("[broadcast.send] peer is source ip")
+            return
+        elif peer_ip == sender_ip:
+            print("[broadcast.send] peer is sender ip")
             return
         
-        elif msg.get("source_ip") == peer_ip:
-            print("[broadcast.send] the source ip is the peer")
-            return
-
         encoded_message = message.encode()
         length = struct.pack("!I",len(encoded_message))
         writer = None
@@ -222,7 +231,7 @@ class Network():
                 return
             except:
                 print(f"[broadcast.send] retrying ({tries+1}) {peer_ip}:{peer_port} : {message}")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)
             finally:
                 if writer:
                     writer.close()
@@ -231,17 +240,19 @@ class Network():
 
     # relay funtions
 
-    async def single_relay(self,node:Node,message:str):
+    async def single_relay(self,node:Node,message:str,sender_ip=None):
         if node.ip:
-            await self.send(node.ip,self.port,message,relay=True)
+            await self.send(node.ip,self.port,message,relay=True,sender_ip=sender_ip)
 
-    async def relay(self,message:str):
+    async def relay(self,message:str,sender_ip=None):
         if self.node.protocol:
             nodes = self.node.protocol.router.find_neighbors(self.node.node)
-            relay_tasks = []
             for node in nodes:
-                relay_tasks.append(self.single_relay(node,message))
-            await asyncio.gather(*relay_tasks,return_exceptions=True)
+                if node.ip == sender_ip:
+                    continue
+                single_relay_task = asyncio.create_task(self.single_relay(node,message,sender_ip))
+                self.active_tasks.add(single_relay_task)
+                single_relay_task.add_done_callback(self.active_tasks.discard)
         else:
             raise AttributeError()
 
@@ -249,10 +260,12 @@ class Network():
     
     async def receive(self,reader:asyncio.StreamReader,writer:asyncio.StreamWriter):
         try:
+            peer_addr = writer.get_extra_info('peername')
+            sender_ip = peer_addr[0] if peer_addr else None
             # recieve code
             length = struct.unpack("!I",await reader.readexactly(4))[0]
             data = await reader.read(length)
-            await self.buffer.put(data)
+            await self.buffer.put((data,sender_ip))
             writer.write(b"\x01") 
             await writer.drain()
             await asyncio.sleep(0.1)
@@ -266,63 +279,61 @@ class Network():
 
     # processing function (runs in task)
 
-    async def process_message(self):
+    async def process_buffer(self):
         # this process takes from recieve.
         while True:
             # if in messages array already
-            data = await self.buffer.get()
+            data,sender_ip = await self.buffer.get()
 
-            message:dict = json.loads(data.decode())
-            str_message = json.dumps(message)
+            process_task = asyncio.create_task(self.process_message(data,sender_ip))
+            self.active_tasks.add(process_task)
+            process_task.add_done_callback(self.active_tasks.discard)
 
-            exists = False
-            source_node = message.get("source_node_id")
-            if source_node:
-                is_sender = source_node == self.node.node.long_id
-            else:
-                is_sender = False
+    async def process_message(self,data,sender_ip):
 
+        str_message = data.decode()
+
+        async with self.ignores_lock:
             async with self.messages_lock:
-                for msg in self.get_messages():
-                    if str_message == msg:
-                        #print("[broadcast.receive] found in messages")
-                        exists = True
-
-            async with self.ignores_lock:
-                if self.in_ignores(str_message):
-                    #print("[broadcast.receive] found in ignore list")
-                    exists = True
-
-            # if doesnt exist and is not the sender
-            if not exists and not is_sender:
-                source_ns_number = message.get("source_ns_number")
-                source_ns_number_ts = message.get("source_ns_number_ts")
-                # if the a newer ns number found then replace existing one
-                await self.set_ns_number(source_ns_number,source_ns_number_ts)
-                # stores and relays if not seen
-                async with self.messages_lock:
+                #print("[broadcast.receive] found in ignore list")
+                if self.in_ignores(str_message) or self.in_messages(str_message):
+                    return
+                else:
                     self.store_message(str_message)
-                if message.get("relay") == True:
-                    await self.relay(str_message)
+                
+        message:dict = json.loads(str_message)
+        is_sender = int(message.get("source_node_id")) == self.node.node.long_id
+                
+        # if doesnt exist and is not the sender
+        if not is_sender:
+            source_ns_number = int(message.get("source_ns_number"))
+            source_ns_number_ts = float(message.get("source_ns_number_ts"))
+            # if the a newer ns number found then replace existing one
+            await self.set_ns_number(source_ns_number,source_ns_number_ts)
+            # stores and relays if not seen
+            if message.get("relay") == True:
+                relay_task = asyncio.create_task(self.relay(str_message,sender_ip))
+                self.active_tasks.add(relay_task)
+                relay_task.add_done_callback(self.active_tasks.discard)
+
 
     # networking functions
 
     async def is_leading_peer(self,node_id,peer_node_id):
         # leading peer is closest to ns_number
         ns_number,_ = await self.get_ns_number()
-        node_long = node_id
-        peer_long = peer_node_id
-        distance = abs(ns_number-node_long)
-        peer_distance = abs(ns_number-peer_long)
-        is_leading_peer = None
+        ns = int(ns_number)
+        node_long = int(node_id)
+        peer_long = int(peer_node_id)
+        if node_long == peer_long: return False
+        distance = abs(ns-node_long)
+        peer_distance = abs(ns-peer_long)
         # tie breaker term
         if distance == peer_distance:
             # default to greater number wins leader
-            is_leading_peer = node_long > peer_long
-        else:
-            # leader if closer to ns_number
-            is_leading_peer = peer_distance > distance
-        return is_leading_peer
+            return node_long > peer_long
+        # leader if closer to ns_number
+        return peer_distance > distance
 
     def get_host(self):
         s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
@@ -447,25 +458,45 @@ class Network():
         async with self.ns_lock:
             #only store new values
             if ns_number_ts>self.ns_number_ts:
-                self.ns_number = ns_number
-                self.ns_number_ts = ns_number_ts
+                self.ns_number = int(ns_number)
+                self.ns_number_ts = float(ns_number_ts)
 
     async def model_sender(self,model):
         #any specific request for the model is sent here
         print("[model_sender] Started")
         globalmodel = copy.deepcopy(model)
         while True:
+            global_model_requests = None
             try:
                 global_model_requests = await self.find_messages({"request":"global_model_request"})
-                for _,msg in global_model_requests:
-                    peer = (msg.get("source_ip"),msg.get("source_port"))
-                    print(f"[model_sender] found global_model_request sending model to {peer[0]}")
-                    await self.send_model(peer[0],self.mtp,globalmodel,0,30)
-                await self.clean_up_from_list(global_model_requests)
-                if len(global_model_requests)==0:
+                done_list = None
+                if global_model_requests:
+                    for _,msg in global_model_requests:
+                        try:
+                            done_already = False
+                            peer = (msg.get("source_ip"),msg.get("source_port"))
+                            done_list = await self.find_messages({"request":"global_model_done"})
+                            for _,done_msg in done_list:
+                                done_peer = (done_msg.get("source_ip"),done_msg.get("source_port"))
+                                if done_peer == peer:
+                                    # if the peer is already done move to next
+                                    done_already = True
+                                    break
+                            if not done_already:
+                                print(f"[model_sender] found global_model_request sending model to {peer[0]}")
+                                await self.send_model(peer[0],self.mtp,globalmodel,0,20)
+                        except Exception as e:
+                            print(f"[model_sender] Inner Exception : {e}")
+                            continue
+                    await self.clean_up_from_list(global_model_requests)
+                    if done_list:
+                        await self.clean_up_from_list(done_list)
+                else:
                     # long sleep
                     await asyncio.sleep(10)
             except Exception as e:
+                if global_model_requests:
+                    await self.clean_up_from_list(global_model_requests)
                 print(f"[model_sender] Exception : {e}")
     
     async def send_model_request(self):
@@ -476,9 +507,27 @@ class Network():
         try:
             message = json.dumps(data)
             await self.relay(message)
-            print("[send_model_request] model request set")
+            print("[send_model_request] model request sent")
         except Exception as e:
             print(f"[send_model_request] Exception : {e}")
+
+    async def send_model_done_request(self):
+        data = {
+            'request':'global_model_done'
+        }
+        data = await self.make_message(relay=True,extra_data=data)
+        try:
+            message = json.dumps(data)
+            await self.relay(message)
+            print("[send_model_request] model request sent")
+        except Exception as e:
+            print(f"[send_model_request] Exception : {e}")
+
+
+    async def node_refresher(self,cycle_time):
+        while True:
+            await asyncio.sleep(60)
+            await self.refresh_routing_table()
 
     async def model_get(self):
 
@@ -487,8 +536,9 @@ class Network():
 
         while True:
             try:
-                model_dict,_ = await self.recieve_model(self.mtp,30,9999)
+                model_dict,_ = await self.recieve_model(self.mtp,45,9999)
                 if model_dict:
+                    await self.send_model_done_request()
                     return model_dict
                 else:
                     await self.send_model_request()
@@ -501,7 +551,7 @@ class Network():
     async def start(self):
         try:
             self.server = await asyncio.start_server(self.receive,"0.0.0.0",self.port)
-            self.process_task = asyncio.create_task(self.process_message())
+            self.process_task = asyncio.create_task(self.process_buffer())
             await self.server.serve_forever()
         except Exception as e:
             print(f"[start] Exception {e}")
@@ -510,6 +560,8 @@ class Network():
         if self.server:
             self.server.close()
             await self.server.wait_closed()
+        if self.active_tasks:
+            await asyncio.gather(*self.active_tasks,return_exceptions=True)
         if self.process_task:
             self.process_task.cancel()
             try: await self.process_task

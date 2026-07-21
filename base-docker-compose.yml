@@ -5,7 +5,6 @@ services:
       dockerfile: .dockerfile
     image: federated-node:latest
 
-
   base-node:
     image: federated-node:latest
     volumes:

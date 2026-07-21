@@ -1,1 +1,0 @@
-this is the results from of the logs of the kademlia fl using 5 local epochs of training per communication cycle

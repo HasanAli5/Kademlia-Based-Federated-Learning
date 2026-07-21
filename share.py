@@ -1,10 +1,8 @@
 import time
-from venv import create
 from kademlia.network import Server
 from network import Network
 import asyncio
 import json
-import copy
 
 
 class Share():
@@ -39,6 +37,7 @@ class Share():
         try:
             data = await self.network.make_message(relay=True,extra_data=share_data)
             await self.network.relay(json.dumps(data))
+            return data.get("timestamp")
         except Exception as e:
             print(f"[send_share_model_request] Exception : {e}")
 
@@ -55,13 +54,15 @@ class Share():
                     print("[share_model_reponse] found a share_model request")
                     ip = msg.get("source_ip")
                     port = msg.get("source_port")
-                    if ip and port:
+                    ts = msg.get("timestamp")
+                    if ip and port and ts:
                         data = {
                             'response':'model_check',
                             'status':await self.get_status()
                         }
                         data.update(self.stage_data)
                         data = await self.network.make_message(relay=False,extra_data=data)
+                        data = self.network.attach_request_info(data,ts)
                         task = asyncio.create_task(self.shield_wrap(self.network.send(ip,port,json.dumps(data))))
                         pending_response.add(task)
                         task.add_done_callback(pending_response.discard)
@@ -85,11 +86,11 @@ class Share():
                 await asyncio.gather(*pending_response,return_exceptions=True)
 
 
-    async def check_accept_models(self,model,wait_time,cooldown):
+    async def check_accept_models(self,model,wait_time,ready_wait_time,cooldown):
         model_check_list = await self.network.find_messages({"response":"model_check"})
         await self.network.clean_up_from_list(model_check_list)
         print("[check_accept_models] started")
-        await self.send_share_model_request()
+        timestamp = await self.send_share_model_request()
         resend_deadline = time.time() + wait_time
         await asyncio.sleep(cooldown)
         while True:
@@ -102,21 +103,22 @@ class Share():
                     return
                 else:
                     # if not then leave
-                    await self.send_share_model_request()
+                    timestamp = await self.send_share_model_request()
                     resend_deadline = time.time() + wait_time
 
             model_check_list = await self.network.find_messages({"response":"model_check"})
 
-            for message,msg in model_check_list:
-                peer = (msg.get("source_ip"),msg.get("source_port"),msg.get("source_node_id"))
-                if peer[0] and peer[1]:
+            for _,msg in model_check_list:
+                peer = (msg.get("source_ip"),msg.get("source_port"),int(msg.get("source_node_id")))
+                ts = msg.get("request_timestamp")
+                if peer[0] and peer[1] and ts == timestamp:
                     status = msg.get("status")
                     if status == False:
                         success = await self.send_global_model(peer[0],model)
                         if not success:
                             # resend request
                             print("[share_model_reponse] failed to send Global Model")
-                            await self.send_share_model_request()
+                            timestamp = await self.send_share_model_request()
                             resend_deadline = time.time() + wait_time
                         else:
                             print("[share_model_reponse] sent Global Model")
@@ -127,11 +129,11 @@ class Share():
             await asyncio.sleep(cooldown)
 
     async def get_global_model(self):
-        model_dict,_ = await self.network.recieve_model(self.msp,60,360)
+        model_dict,_ = await self.network.recieve_model(self.msp,connect_timeout=60,model_timeout=360)
         return model_dict
     
     async def send_global_model(self,ip,model):
-        return await self.network.send_model(ip,self.msp,model,0,60)
+        return await self.network.send_model(ip,self.msp,model,weighting=0,wait_time=60)
     
     async def send_ready_request(self):
         print("[send_ready_request] started")
@@ -143,23 +145,34 @@ class Share():
         try:
             data = await self.network.make_message(relay=True,extra_data=ready_data)
             await self.network.relay(json.dumps(data))
+            return data.get("timestamp")
         except Exception as e:
             print(f"[send_share_model_request] Exception : {e}")
 
-    async def send_not_ready_response(self,cooldown:int):
+    async def send_ready_response(self,cooldown:int):
         print("[send_not_ready_response] started")
-        ready_data = {
+        not_ready_data = {
             'response':'not_ready',
         }
-        ready_data.update(self.stage_data)
+        not_ready_data.update(self.stage_data)
+        is_ready_data = {
+            'response':'is_ready',
+        }
+        is_ready_data.update(self.stage_data)
         # send model share to all neighbours
         try:
             while True:
+                status = await self.get_status()
                 ready_requests = await self.network.find_messages({"request":"ready"})
-                for messasge,msg in ready_requests:
+                for _,msg in ready_requests:
                     peer = (msg.get("source_ip"),msg.get("source_port"))
-                    data = await self.network.make_message(relay=False,extra_data=ready_data)
-                    if peer[0] and peer[1]:
+                    ts = msg.get("timestamp")
+                    if peer[0] and peer[1] and ts:
+                        if status:
+                            data = await self.network.make_message(relay=False,extra_data=is_ready_data)
+                        else:
+                            data = await self.network.make_message(relay=False,extra_data=not_ready_data)
+                        data = self.network.attach_request_info(data,ts)
                         await self.network.send(peer[0],peer[1],json.dumps(data))
                 await self.network.clean_up_from_list(ready_requests)
                 await asyncio.sleep(cooldown)
@@ -170,30 +183,35 @@ class Share():
     async def get_ready_response(self,cooldown:int,wait_time:int):
         print("[get_ready_response] started")
         # clean before scanning new
-        not_ready_list = await self.network.find_messages({"response":"not_ready"})
-        await self.network.clean_up_from_list(not_ready_list)
-        not_ready_list = await self.network.find_messages({"response":"ready"})
-        await self.network.clean_up_from_list(not_ready_list)
+        prev_not_ready_list = await self.network.find_messages({"response":"not_ready"})
+        await self.network.clean_up_from_list(prev_not_ready_list)
+        prev_is_ready_list = await self.network.find_messages({"response":"is_ready"})
+        await self.network.clean_up_from_list(prev_is_ready_list)
 
-        await self.send_ready_request()
+        timestamp = await self.send_ready_request()
         await asyncio.sleep(cooldown)
 
-        deadline = time.time() + wait_time
-        while time.time() < deadline:
+        deadline = None
+        while deadline == None or time.time() < deadline :
             not_ready_list = await self.network.find_messages({"response":"not_ready"})
-            if len(not_ready_list)>0:
-                await self.network.clean_up_from_list(not_ready_list)
-                return False
+            for _,msg in not_ready_list:
+                ts = msg.get("request_timestamp")
+                if timestamp == ts:
+                    await self.network.clean_up_from_list(not_ready_list)
+                    return False
             await self.network.clean_up_from_list(not_ready_list)
 
-            ready_list = await self.network.find_messages({"request":"ready"})
-            if len(ready_list)>0:
-                deadline = time.time() + wait_time
+            ready_list = await self.network.find_messages({"response":"is_ready"})
+            for _,msg in ready_list:
+                ts = msg.get("request_timestamp")
+                if timestamp == ts:
+                    #sets or resets the deadline
+                    deadline = time.time() + wait_time
+                    break
             await self.network.clean_up_from_list(ready_list)
 
             await asyncio.sleep(cooldown)
         return True
-    
 
     async def send_leader_request(self):
         ns_number,ns_number_ts = await self.network.get_ns_number()
@@ -208,6 +226,7 @@ class Share():
             message = json.dumps(data)
             await self.network.relay(message)
             print("[send_leader_request] leader request set")
+            return data.get("timestamp")
         except Exception as e:
             print(f"[send_leader_request] Exception : {e}")
 
@@ -232,7 +251,7 @@ class Share():
                     if ip and port:
                         # if this node has better node id (closer to ns_number)
                         print(f"[deny_leader_request] {self.network.node.node.long_id} vs {msg.get('source_node_id')}\nns_number : {ns_number}:")
-                        if await self.network.is_leading_peer(self.network.node.node.long_id,msg.get('source_node_id')):
+                        if await self.network.is_leading_peer(self.network.node.node.long_id,int(msg.get('source_node_id'))):
                             data = await self.network.make_message(relay=False,extra_data=deny_data)
                             task = asyncio.create_task(self.network.send(ip,port,json.dumps(data)))
                             pending_response.add(task)
@@ -258,10 +277,17 @@ class Share():
     async def await_leader_response(self,response_wait:int,exit_wait:int,cooldown:int):
         try:
 
+            DENIED_BY_SHARE = 1
+            DENIED_BY_LEADER = 2
+            ACCEPTED_AS_LEADER = 3
+            NO_RESPONSE_YET = 4
+
             double_check = False
 
              # this send a leader request
-            await self.send_ready_request()
+            timestamp = await self.send_leader_request()
+            dc_timestamp = None
+            state = NO_RESPONSE_YET
 
             await asyncio.sleep(cooldown)
 
@@ -271,52 +297,69 @@ class Share():
             while True:
                 accept_leader_list = await self.network.find_messages({"response":"accept_go_leader"})
                 deny_leader_list = await self.network.find_messages({"response":"deny_go_leader"})
-                deny_aggregate_list = await self.network.find_messages({"response":"not_ready"})
-                join_request_list = await self.network.find_messages({"request":"go"})
+                not_ready_list = await self.network.find_messages({"response":"not_ready"})
+                go_request_list = await self.network.find_messages({"request":"go"})
 
-                if len(join_request_list)>0:
+                if len(go_request_list)>0:
                     print("[await_leader_response] found go request get out of here!")
                     await self.network.clean_up_from_list(accept_leader_list)
                     await self.network.clean_up_from_list(deny_leader_list)
-                    await self.network.clean_up_from_list(deny_aggregate_list)
-                    await self.network.clean_up_from_list(join_request_list)
-                    message,msg = join_request_list[0]
+                    await self.network.clean_up_from_list(not_ready_list)
+                    await self.network.clean_up_from_list(go_request_list)
+                    message,msg = go_request_list[0]
                     return msg
-
-                if len(deny_aggregate_list)>0:
-                    # there are people still training just wait
-                    print("[await_leader_response] found deny go ahead")
-                    await self.network.clean_up_from_list(accept_leader_list)
-                    await self.network.clean_up_from_list(deny_leader_list)
-                    await self.network.clean_up_from_list(deny_aggregate_list)
-                    # stop the exit
-                    exit_deadline = None
-                    double_check = False
-                    recast_deadline = time.time() + response_wait
-
-                elif len(deny_leader_list)>0:
-                    print("[await_leader_response] found deny go leader")
-                    await self.network.clean_up_from_list(accept_leader_list)
-                    await self.network.clean_up_from_list(deny_leader_list)
-                    exit_deadline = None
-                    double_check = False
-                    recast_deadline = time.time() + response_wait
                 
-                elif len(accept_leader_list)>0:
-                    print("[await_leader_response] found accept go leader")
+                elif len(not_ready_list)>0:
+                    for _,msg in not_ready_list:
+                        ts = msg.get("request_timestamp")
+                        if timestamp == ts or dc_timestamp == ts:
+                        # there are people still training just wait
+                            print("[await_leader_response] found deny go ahead")
+                            # stop the exit
+                            exit_deadline = None
+                            double_check = False
+                            recast_deadline = time.time() + response_wait
+                            state = DENIED_BY_SHARE
+                            break
                     await self.network.clean_up_from_list(accept_leader_list)
-                    exit_deadline = time.time() + exit_wait
-                    recast_deadline = None
+                    await self.network.clean_up_from_list(deny_leader_list)
+                    await self.network.clean_up_from_list(not_ready_list)
+
+                elif len(deny_leader_list)>0 and state > DENIED_BY_SHARE:
+                    for _,msg in deny_leader_list :
+                        ts = msg.get("request_timestamp")
+                        if timestamp == ts or dc_timestamp == ts:
+                            print("[await_leader_response] found deny go leader")
+                            exit_deadline = None
+                            double_check = False
+                            recast_deadline = time.time() + response_wait
+                            state = DENIED_BY_LEADER
+                            break
+                    await self.network.clean_up_from_list(accept_leader_list)
+                    await self.network.clean_up_from_list(deny_leader_list)
+
+                elif len(accept_leader_list)>0 and state > DENIED_BY_LEADER:
+                    for _,msg in accept_leader_list:
+                        ts = msg.get("request_timestamp")
+                        if timestamp == ts or dc_timestamp == ts:
+                            print("[await_leader_response] found accept go leader")
+                            exit_deadline = time.time() + exit_wait
+                            recast_deadline = None
+                            state = ACCEPTED_AS_LEADER
+                            break
+                    await self.network.clean_up_from_list(accept_leader_list)
 
                 if recast_deadline and time.time() > recast_deadline:
-                    await self.send_leader_request()
+                    timestamp = await self.send_leader_request()
                     recast_deadline = time.time() + response_wait
+                    state = NO_RESPONSE_YET
 
                 if exit_deadline and time.time() > exit_deadline:
                     if not double_check:
                         double_check = True
-                        await self.send_leader_request()
+                        dc_timestamp = await self.send_leader_request()
                         exit_deadline = time.time() + exit_wait
+                        state = NO_RESPONSE_YET
                     else:
                         return True
                 
@@ -334,6 +377,7 @@ class Share():
         try:
             data = await self.network.make_message(relay=True,extra_data=ready_data)
             await self.network.relay(json.dumps(data))
+            return data.get("timestamp")
         except Exception as e:
             print(f"[send_share_model_request] Exception : {e}")
 
@@ -344,7 +388,7 @@ class Share():
         responder = asyncio.create_task(self.send_leader_response(cooldown=2))
 
          # we then await for other people who want to be leader and decide who shall
-        response = await self.await_leader_response(response_wait=25,exit_wait=35,cooldown=2)
+        response = await self.await_leader_response(response_wait=15,exit_wait=30,cooldown=2)
 
         try:
             if response is True:
@@ -358,6 +402,10 @@ class Share():
                 return
         except Exception as e:
             print(f"[sync] Exception {e}")
+        finally:
+            responder.cancel()
+            try:await responder
+            except asyncio.CancelledError:pass
 
         responder.cancel()
         try: await responder

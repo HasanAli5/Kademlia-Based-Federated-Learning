@@ -27,10 +27,6 @@ class Train():
         self.state = self.STATE_INACTIVE
         self.state_lock = asyncio.Lock()
 
-        # trained parameter
-        self.trained = False
-        self.trained_lock = asyncio.Lock()
-
         # holds the active responder task that will be active throughout to answer training requests
         self.train_responder_task = None
 
@@ -65,13 +61,6 @@ class Train():
         self.next_stage_request.update(self.stage_data)
 
     # setters/getters
-    async def get_trained(self):
-        async with self.trained_lock:
-            return self.trained
-    
-    async def set_trained(self,value:bool):
-        async with self.trained_lock:
-            self.trained = value
 
     async def get_state(self):
         async with self.state_lock:
@@ -165,19 +154,19 @@ class Train():
 
         model.to(model_toolbox.device)
 
-        train_dl,val_dl = data_toolbox.get_dataloaders(32)
+        train_dl,val_dl = data_toolbox.get_dataloaders()
 
         config = model_toolbox.get_config()
         
-        training_task = asyncio.to_thread(train_val_loop,model,config,(train_dl,val_dl),epochs,model_toolbox.logs)
+        training_task = asyncio.to_thread(train_val_loop,model,config,(train_dl,val_dl),epochs,model_toolbox.logs,model_toolbox)
 
         try:
             model_toolbox.logs = await training_task
-            await self.set_trained(True)
+            model.to('cpu')
+            return
         except Exception as e:
             print(f"[Training] Exception : {e}")
-
-        model.to('cpu')
+        
 
     async def deny_aggregate_request(self,cooldown:int):
         response_data = {

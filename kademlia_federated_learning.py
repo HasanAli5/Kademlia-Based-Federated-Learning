@@ -31,16 +31,16 @@ class Kademlia_Federated_Learning():
         self.akp = a_kademlia_port
         self.mtp = model_transfer_port
 
-        self.data_toolbox = Data_Manager(test=False)
+        self.data_toolbox = Data_Manager()
 
         classes = len(self.data_toolbox.train_data.info["label"])
         channels = self.data_toolbox.train_data.info["n_channels"]
 
         model = self.make_model(ResNet18,classes,channels)
-        self.model_toolbox = Model_Manager(model,learning_rate=1e-5)
+        self.model_toolbox = Model_Manager(model)
         
         # start server
-        self.node = Server(ksize=4,alpha=4)
+        self.node = Server()
 
         # start relay system coroutine
         self.network = Network(self.node,port=self.rp,buffer_length=100,messages_length=100,ignores_length=100,model_transfer_port=model_transfer_port)
@@ -51,16 +51,14 @@ class Kademlia_Federated_Learning():
         self.share = Share(self.network,model_transfer_port)
 
         self.epochs = 5
+        self.minimum_train_wait = 60
 
         self.model_task = None
 
+        self.save_global_model_per_round = True
+
     def make_model(self,model_class:Type[nn.Module],classes:int,channels:int):
-        # get device info
-        device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu" # type: ignore
-        # initialise a model
-        #model = ResNet18(channels=channels,classes=classes)
         model = model_class(channels=channels,classes=classes)
-        model.to(device)
         return model
 
     async def stop_task(self,task:asyncio.Task,name:str):
@@ -92,23 +90,26 @@ class Kademlia_Federated_Learning():
             # start deny routine
             deny_task = asyncio.create_task(self.train.deny_aggregate_request(cooldown=2))
 
+            start_of_train = time.time()
+
             # start the train corutine
             await self.train.training(self.model_toolbox.model,self.data_toolbox,self.model_toolbox,epochs=self.epochs)
 
+            end_of_train = time.time()
+
+            elapsed_time = end_of_train - start_of_train
+
             #stop nodes with quick training
-            await asyncio.sleep(10)
+            await asyncio.sleep(max(0.1,self.minimum_train_wait-elapsed_time))
 
             # cancel deny after training complete
             await self.stop_task(deny_task,"deny_task")
-
 
             await self.train.set_state(self.train.STATE_WAITING)
 
             # [AGGREGATION STAGE]
             print("\n[CYCLE] [AGGREGATION STAGE]\n")
 
-            # send aggregation request if possible to start network
-            
             # get all denied request with a certain timeframe
             await self.aggregate.sync_and_join_aggregation()
 
@@ -146,9 +147,11 @@ class Kademlia_Federated_Learning():
         print("\n[CYCLE] [SHARING STAGE]\n")
 
         await self.share.set_status(False)
-        not_ready_task = asyncio.create_task(self.share.send_not_ready_response(cooldown=2))
+        ready_responder = asyncio.create_task(self.share.send_ready_response(cooldown=2))
 
         if model is not None:
+            if self.save_global_model_per_round:
+                self.model_toolbox.save_global_model(model)
             ns_number = random.randint(0,2**160)
             ns_number_ts = time.time()
             data = {
@@ -175,11 +178,10 @@ class Kademlia_Federated_Learning():
 
         share_responder_task = asyncio.create_task(self.share.share_model_reponse())
 
-        await self.stop_task(not_ready_task,"not_ready")
-
-        await self.share.check_accept_models(model,wait_time=35,cooldown=2)
+        await self.share.check_accept_models(model,wait_time=35,ready_wait_time=30,cooldown=2)
 
         # stop response task before syncing
+        await self.stop_task(ready_responder,"not_ready")
 
         await self.stop_task(start_training_response_task,"start_training_response_task")
 
